@@ -412,7 +412,7 @@ function renderCodex(s) {
 
   $("cxLegend").innerHTML = CX_SLOTS
     .filter((slot) => wins.some((w) => w.label === slot.label))
-    .map((slot) => `<i class="swatch ${slot.cls}"></i>${slot.label}`).join(" ");
+    .map((slot) => `<span class="lg"><i class="swatch ${slot.cls}"></i>${slot.label}</span>`).join("");
 
   $("cxPlan").textContent = s.plan_type || "–";
   const cr = s.credits || {};
