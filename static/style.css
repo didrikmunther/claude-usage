@@ -29,7 +29,7 @@ body.two .wrap { max-width: 1180px; }
 .cols { display: grid; grid-template-columns: 1fr; gap: 28px; }
 body.two .cols { grid-template-columns: 1fr 1fr; }
 .col { min-width: 0; }
-.col-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; }
+.col-head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
 .col-title { font-size: 15px; font-weight: 700; letter-spacing: -.01em; padding-bottom: 3px; border-bottom: 2px solid var(--line); }
 .col-title.claude { border-color: var(--fh); }
 .col-title.codex { border-color: var(--cx1); }
@@ -37,6 +37,9 @@ body.two .cols { grid-template-columns: 1fr 1fr; }
 @media (max-width: 820px) { body.two .cols { grid-template-columns: 1fr; } }
 
 .top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 28px; }
+/* menu-bar widget view (?widget=1): drop the title bar, tighten the top */
+.widget .top { display: none; }
+.widget .wrap { padding-top: 22px; }
 h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
 .status { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background .3s; }

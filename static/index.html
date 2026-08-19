@@ -6,15 +6,17 @@
   <title>Claude &amp; Codex Usage</title>
   <link rel="stylesheet" href="/static/vendor/uPlot.min.css" />
   <link rel="stylesheet" href="/static/style.css" />
+  <script>
+    // ?widget=1 (used by the menu-bar webview) hides the page title; the plain
+    // browser URL keeps it. Set on <html> before paint to avoid a flash.
+    if (new URLSearchParams(location.search).has("widget"))
+      document.documentElement.classList.add("widget");
+  </script>
 </head>
 <body>
   <main class="wrap">
     <header class="top">
       <h1>Claude&nbsp;&amp;&nbsp;Codex&nbsp;Usage</h1>
-      <div class="status">
-        <span id="dot" class="dot"></span>
-        <span id="statusText" class="muted">connecting…</span>
-      </div>
     </header>
 
     <div id="banner" class="banner" hidden></div>
@@ -22,7 +24,7 @@
     <div class="cols">
       <!-- ===================== CLAUDE ===================== -->
       <section class="col" id="colClaude">
-        <div class="col-head"><span class="col-title claude">Claude</span></div>
+        <div class="col-head"><span id="dot" class="dot"></span><span class="col-title claude">Claude</span></div>
 
         <section class="bars">
           <div class="bar-row">
@@ -72,6 +74,7 @@
       <!-- ===================== CODEX ===================== -->
       <section class="col" id="colCodex" hidden>
         <div class="col-head">
+          <span id="cxDot" class="dot"></span>
           <span class="col-title codex">Codex</span>
           <span id="cxSource" class="muted src"></span>
         </div>

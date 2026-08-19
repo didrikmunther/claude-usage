@@ -73,7 +73,7 @@ class AppDelegate(NSObject):
         self.popover.setBehavior_(NSPopoverBehaviorTransient)
         self.popover.setContentViewController_(vc)
         self.web.loadRequest_(
-            NSURLRequest.requestWithURL_(NSURL.URLWithString_(BASE)))
+            NSURLRequest.requestWithURL_(NSURL.URLWithString_(f"{BASE}/?widget=1")))
 
         # --- title refresh loop ---
         self.refresh_(None)

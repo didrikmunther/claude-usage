@@ -448,18 +448,25 @@ function renderCodexForecast() {
 }
 
 // ---- status ----
+function setDots(cls) {                        // one status dot per column
+  for (const id of ["dot", "cxDot"]) {
+    const d = $(id);
+    if (d) d.className = cls ? `dot ${cls}` : "dot";
+  }
+}
+
 function setStatus(st) {
-  const dot = $("dot"), txt = $("statusText"), banner = $("banner");
+  const banner = $("banner");
   if (!st) return;
   if (st.state === "ok") {
-    dot.className = "dot ok"; txt.textContent = "live";
+    setDots("ok");
     banner.hidden = !st.message;
     if (st.message) banner.textContent = st.message;   // partial failure note
   } else if (st.state === "error") {
-    dot.className = "dot err"; txt.textContent = "error";
+    setDots("err");
     banner.hidden = false; banner.textContent = st.message || "poll failed";
   } else {
-    dot.className = "dot"; txt.textContent = st.state;
+    setDots("");
   }
   if (st.ts) $("updated").textContent = "updated " + new Date(st.ts).toLocaleTimeString([], { hour12: false });
 }
@@ -515,7 +522,7 @@ function connect() {
   sendInterval = (v) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ set_interval: v }));
   ws.onopen = () => { backoff = 500; };
   ws.onclose = () => {
-    $("dot").className = "dot"; $("statusText").textContent = "reconnecting…";
+    setDots("");
     setTimeout(connect, backoff); backoff = Math.min(8000, backoff * 2);
   };
   ws.onmessage = (ev) => {
