@@ -1,5 +1,7 @@
 # claude-usage
 
+<img width="1908" height="1436" alt="CleanShot 2026-08-19 at 16 48 55@2x" src="https://github.com/user-attachments/assets/d881e582-4956-43c8-90e1-a55c8aef6260" />
+
 A local **menu-bar app + web dashboard** for your **Claude** (Pro/Max) and
 **OpenAI Codex** usage limits — the same 5-hour / weekly windows the desktop
 apps show, but live in one place with history graphs, burn-rate forecasts, and
