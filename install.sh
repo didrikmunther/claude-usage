@@ -12,6 +12,27 @@ PORT="${CLAUDE_USAGE_PORT:-8787}"
 UPLOT_VER="1.6.31"
 
 echo "→ project: $DIR"
+
+# --- prerequisites ---
+if [ "$(uname)" != "Darwin" ]; then
+  echo "✗ macOS only (needs the Keychain + the Claude/Codex desktop apps)." >&2
+  exit 1
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "✗ python3 not found — install it (e.g. 'brew install python' or python.org)." >&2
+  exit 1
+fi
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 9) else 1)'; then
+  echo "✗ Python 3.9+ required (found $(python3 -V 2>&1))." >&2
+  exit 1
+fi
+if [ ! -d "$HOME/Library/Application Support/Claude" ] && [ ! -d "$HOME/.codex" ]; then
+  echo "✗ Neither the Claude desktop app nor OpenAI Codex was found." >&2
+  echo "  Install and sign in to at least one, then re-run." >&2
+  exit 1
+fi
+echo "→ prerequisites OK ($(python3 -V 2>&1))"
+
 mkdir -p "$DATA" "$DIR/static/vendor" "$HOME/Library/LaunchAgents"
 
 echo "→ creating venv + installing deps"

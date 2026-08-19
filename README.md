@@ -1,60 +1,100 @@
 # claude-usage
 
-A local dashboard for your Claude Pro/Max usage limits — the same data the
-desktop app's tray shows (5-hour + weekly windows, per-model, credits), but
-live in a browser with a history graph and an adjustable poll interval.
+A local **menu-bar app + web dashboard** for your **Claude** (Pro/Max) and
+**OpenAI Codex** usage limits — the same 5-hour / weekly windows the desktop
+apps show, but live in one place with history graphs, burn-rate forecasts, and
+spike markers.
 
-## How it works
+- **Menu bar:** shows `x%Xh` (5-hour % + hours to reset). Click it to drop the
+  full dashboard down as a panel (a webview of the local server).
+- **Dashboard** (`http://127.0.0.1:8787`): Claude and Codex side by side —
+  5h/weekly bars with reset countdowns, a uPlot history graph (24h / week /
+  full), a "used this range" tally, per-window forecasts, and hover-to-reveal
+  markers on your biggest spikes.
 
-`server.py` reads the Claude desktop app's `Claude Safe Storage` Keychain key
-**once at startup** (this is the prompt you approve), then on a timer:
+> macOS only. It's a companion to the Claude desktop app and/or the Codex app —
+> it reads their local session, it does not log in for you.
 
-1. decrypts the app's claude.ai cookies,
-2. calls `GET https://claude.ai/api/organizations/{org}/usage` via `curl_cffi`
-   (Chrome TLS impersonation → clears Cloudflare),
-3. stores the sample in SQLite (`~/.claude-usage/usage.db`),
-4. broadcasts it to every connected browser over WebSocket.
+## Requirements
 
-The single-page UI (light, minimal) shows 5h/7d bars with reset countdowns, a
-uPlot utilization graph, per-model + credit cards, and a poll-interval slider
-that retimes the loop live (and persists the setting).
+- **macOS**
+- **Python 3.9+** (`python3 --version`)
+- The **Claude desktop app** and/or **OpenAI Codex** installed and signed in
+  (you need at least one; whichever is present shows up)
 
 ## Install
 
 ```bash
+git clone <this-repo-url> claude-usage
+cd claude-usage
 ./install.sh
 ```
 
-This creates a venv, installs deps, vendors the chart lib, and loads a
-LaunchAgent (`com.claude-usage.server`) that auto-starts at login and keeps the
-server alive. Open **http://127.0.0.1:8787**.
+`install.sh` creates a virtualenv, installs deps, vendors the chart library, and
+loads two per-user LaunchAgents (auto-start at login, keep-alive):
 
-On first launch, macOS prompts for the `Claude Safe Storage` Keychain item —
-click **Always Allow** (after that it's silent).
+- `com.claude-usage.server` — the poller + dashboard server
+- `com.claude-usage.menubar` — the menu-bar app
 
-## Run in the foreground (dev)
+On first launch macOS prompts for the **`Claude Safe Storage`** Keychain item —
+click **Always Allow** (after that it's silent). Then click the `x%Xh` item in
+your menu bar, or open **http://127.0.0.1:8787**.
+
+## Security — what it accesses, and what stays local
+
+Everything runs on your machine; **nothing is sent anywhere except the official
+Claude/OpenAI APIs** the desktop apps already talk to. The server binds
+`127.0.0.1` only.
+
+- **Claude:** reads the desktop app's `Claude Safe Storage` key from your
+  Keychain (once, at startup), decrypts the app's `claude.ai` cookies locally,
+  and calls `GET https://claude.ai/api/organizations/{org}/usage`.
+- **Codex:** reads the Bearer token from `~/.codex/auth.json` and calls
+  `GET https://chatgpt.com/backend-api/codex/usage` (quota-free), falling back
+  to the on-disk session rollout logs if the token is stale.
+- History is stored in SQLite at `~/.claude-usage/usage.db`. No telemetry.
+
+The code is short and readable — audit `poller.py` / `codex_poller.py` /
+`server.py` before trusting it with your session.
+
+## Manage
 
 ```bash
-.venv/bin/python server.py          # Ctrl-C to stop
-.venv/bin/python poller.py          # one-shot: print a single live sample
-.venv/bin/pytest tests/             # pure-logic tests (no Keychain/network)
+launchctl kickstart -k gui/$(id -u)/com.claude-usage.server    # restart server
+launchctl kickstart -k gui/$(id -u)/com.claude-usage.menubar   # restart menu bar
+launchctl bootout   gui/$(id -u)/com.claude-usage.server       # stop server
+tail -f ~/.claude-usage/server.log ~/.claude-usage/menubar.log # logs
 ```
 
-## Manage the agent
+Run in the foreground for development:
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.claude-usage.server   # restart
-launchctl bootout   gui/$(id -u)/com.claude-usage.server      # stop / uninstall
+.venv/bin/python server.py      # Ctrl-C to stop
+.venv/bin/python poller.py      # print one live Claude sample
+.venv/bin/python codex_poller.py# print one live Codex sample
+.venv/bin/pytest tests/         # pure-logic tests (no Keychain/network)
+```
+
+## Uninstall
+
+```bash
+./uninstall.sh            # stop + remove agents and the venv (keeps your history)
+./uninstall.sh --purge    # also delete ~/.claude-usage (history + logs)
 ```
 
 ## Config
 
-- Port: `CLAUDE_USAGE_PORT` (default 8787). Binds 127.0.0.1 only.
-- Org: auto-detected from the desktop app; override with `CLAUDE_USAGE_ORG`.
-- Poll interval: change it in the UI (10–3600 s); stored in SQLite.
+- **Port:** `CLAUDE_USAGE_PORT` (default 8787). Binds `127.0.0.1` only.
+- **Claude org:** auto-detected from the desktop app; override with
+  `CLAUDE_USAGE_ORG`.
+- **Poll interval:** change it in the dashboard (10–3600 s); stored in SQLite.
+- **Spike window / chart range / poll interval** are all adjustable in the UI
+  and persist.
 
-## Notes / caveats
+## Notes / disclaimer
 
-- Undocumented internal endpoint — keep the interval reasonable.
-- If the Claude app's session cookies expire, the UI shows "session expired —
-  open the Claude app"; open it once to refresh.
+- Uses **undocumented** internal endpoints — keep the interval reasonable, and
+  expect it to break if the providers change things.
+- Not affiliated with or endorsed by Anthropic or OpenAI. For personal use;
+  respect each provider's Terms of Service.
+- If a session expires, the UI says so — open the relevant app once to refresh.
