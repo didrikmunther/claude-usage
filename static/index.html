@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Claude &amp; Codex Usage</title>
+  <link rel="stylesheet" href="/static/vendor/uPlot.min.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <h1>Claude&nbsp;&amp;&nbsp;Codex&nbsp;Usage</h1>
+      <div class="status">
+        <span id="dot" class="dot"></span>
+        <span id="statusText" class="muted">connecting…</span>
+      </div>
+    </header>
+
+    <div id="banner" class="banner" hidden></div>
+
+    <div class="cols">
+      <!-- ===================== CLAUDE ===================== -->
+      <section class="col" id="colClaude">
+        <div class="col-head"><span class="col-title claude">Claude</span></div>
+
+        <section class="bars">
+          <div class="bar-row">
+            <div class="bar-label">5-hour<span id="fhReset" class="reset muted"></span></div>
+            <div class="track"><div id="fhFill" class="fill fh"></div></div>
+            <div id="fhPct" class="pct">–</div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-label">7-day<span id="sdReset" class="reset muted"></span></div>
+            <div class="track"><div id="sdFill" class="fill sd"></div></div>
+            <div id="sdPct" class="pct">–</div>
+          </div>
+        </section>
+
+        <section class="card chart-card">
+          <div class="chart-head">
+            <div class="head-left">
+              <div id="range" class="seg" data-sync="range">
+                <button data-r="24h">24h</button>
+                <button data-r="7d">Week</button>
+                <button data-r="full">Full</button>
+              </div>
+              <span id="consumed" class="consumed"></span>
+            </div>
+            <span class="legend">
+              <i class="swatch fh"></i>5-hour
+              <i class="swatch sd"></i>7-day
+            </span>
+          </div>
+          <div id="chart"></div>
+        </section>
+
+        <section class="card prog-card">
+          <div class="prog-head"><span class="muted">forecast · at your pace since each reset</span></div>
+          <div id="prog" class="prog"><div class="prog-row muted"><span class="prog-msg">gathering data…</span></div></div>
+        </section>
+
+        <section class="cards">
+          <div class="card metric"><div class="k">Opus (7d)</div><div id="mOpus" class="v">–</div></div>
+          <div class="card metric"><div class="k">Sonnet (7d)</div><div id="mSonnet" class="v">–</div></div>
+          <div class="card metric"><div class="k">Extra credits used</div><div id="mCredits" class="v">–</div></div>
+        </section>
+
+        <section id="scoped" class="scoped"></section>
+      </section>
+
+      <!-- ===================== CODEX ===================== -->
+      <section class="col" id="colCodex" hidden>
+        <div class="col-head">
+          <span class="col-title codex">Codex</span>
+          <span id="cxSource" class="muted src"></span>
+        </div>
+
+        <section id="cxBars" class="bars"></section>
+
+        <section class="card chart-card">
+          <div class="chart-head">
+            <div class="head-left">
+              <div id="cxRange" class="seg" data-sync="range">
+                <button data-r="24h">24h</button>
+                <button data-r="7d">Week</button>
+                <button data-r="full">Full</button>
+              </div>
+              <span id="cxConsumed" class="consumed"></span>
+            </div>
+            <span id="cxLegend" class="legend"></span>
+          </div>
+          <div id="cxChart"></div>
+        </section>
+
+        <section class="card prog-card">
+          <div class="prog-head"><span class="muted">forecast · at your pace since each reset</span></div>
+          <div id="cxProg" class="prog"><div class="prog-row muted"><span class="prog-msg">gathering data…</span></div></div>
+        </section>
+
+        <section class="cards two">
+          <div class="card metric"><div class="k">Plan</div><div id="cxPlan" class="v">–</div></div>
+          <div class="card metric"><div class="k">Extra credits</div><div id="cxCredits" class="v">–</div></div>
+        </section>
+
+        <section id="cxScoped" class="scoped"></section>
+      </section>
+    </div>
+
+    <footer class="controls card">
+      <label for="ival">Poll every</label>
+      <input id="ival" type="range" min="10" max="600" step="5" value="60" />
+      <input id="ivalNum" type="number" min="10" max="3600" value="60" />
+      <span class="muted">sec</span>
+      <button id="pollNow" class="btn">Poll now</button>
+      <label for="spikeWin" class="ctl-lbl">Spike window</label>
+      <select id="spikeWin" class="sel">
+        <option value="300">5 min</option>
+        <option value="900">15 min</option>
+        <option value="1800">30 min</option>
+        <option value="3600">1 hour</option>
+        <option value="7200">2 hours</option>
+      </select>
+      <span id="updated" class="muted upd"></span>
+    </footer>
+  </main>
+
+  <script src="/static/vendor/uPlot.iife.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
