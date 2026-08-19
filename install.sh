@@ -75,6 +75,12 @@ cat > "$MB_PLIST" <<PLIST_EOF
 </plist>
 PLIST_EOF
 
+echo "→ removing any old-labelled agents (pre-rename / rumps menu bar)"
+for OLD in com.didrik.claude-usage com.didrik.claude-usage-menubar; do
+  launchctl bootout "gui/$UID/$OLD" 2>/dev/null || true
+  rm -f "$HOME/Library/LaunchAgents/$OLD.plist"
+done
+
 echo "→ (re)loading agents"
 reload_agent() {
   local L="$1" P="$2"

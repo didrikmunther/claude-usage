@@ -1,76 +1,127 @@
-"""macOS menu-bar readout for Claude usage.
+"""macOS menu-bar app for Claude/Codex usage.
 
-Reads the local dashboard server's /api/latest every 30s and shows the 5-hour
-utilization + hours-to-reset in the menu bar (e.g. '35%4.1h'). Click for detail.
-Talks only to 127.0.0.1 — no Keychain or network access of its own.
+Shows `x%Xh` (5-hour % + hours to reset) on the status bar. Clicking it drops
+the full live dashboard as a popover — a WKWebView pointed at the local server
+(http://127.0.0.1:PORT), so charts/forecasts/WebSocket updates all work as-is.
+A slim header row inside the popover has Reload / Open in browser / Quit.
+
+Raw PyObjC (not rumps) because we need a custom view (webview) in the popover.
 """
-from __future__ import annotations
-
 import json
 import os
-import subprocess
+import threading
 import urllib.request
 
-import rumps
+from AppKit import (
+    NSApplication, NSApplicationActivationPolicyAccessory, NSStatusBar,
+    NSVariableStatusItemLength, NSPopover, NSPopoverBehaviorTransient,
+    NSViewController, NSView, NSButton, NSBezelStyleRounded, NSFont,
+    NSMakeRect, NSApp, NSWorkspace, NSTimer, NSMinYEdge,
+)
+from Foundation import NSObject, NSURL, NSURLRequest
+from WebKit import WKWebView, WKWebViewConfiguration
 
-from menubar_fmt import title_for, pct
+from menubar_fmt import title_for
 
-PORT = os.environ.get("CLAUDE_USAGE_PORT", "8787")
+PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "8787"))
 BASE = f"http://127.0.0.1:{PORT}"
 REFRESH_SEC = 30
+POPW, POPH, HEADER_H = 960, 680, 36
 
 
-class MenuBar(rumps.App):
-    def __init__(self):
-        super().__init__("…", quit_button="Quit")
-        self.m5 = rumps.MenuItem("5-hour: …")
-        self.m7 = rumps.MenuItem("7-day: –")
-        self.mo = rumps.MenuItem("Opus (7d): –")
-        self.ms = rumps.MenuItem("Sonnet (7d): –")
-        self.mc = rumps.MenuItem("Extra credits: –")
-        self.menu = [
-            self.m5, self.m7, None,
-            self.mo, self.ms, self.mc, None,
-            rumps.MenuItem("Open dashboard", callback=self._open),
-        ]
-        rumps.Timer(self.refresh, REFRESH_SEC).start()
-        self.refresh(None)
+class AppDelegate(NSObject):
+    def applicationDidFinishLaunching_(self, _notification):
+        # --- status item + title ---
+        self.statusItem = NSStatusBar.systemStatusBar().statusItemWithLength_(
+            NSVariableStatusItemLength)
+        btn = self.statusItem.button()
+        btn.setTitle_("…")
+        btn.setTarget_(self)
+        btn.setAction_("togglePopover:")
 
-    def _open(self, _):
-        subprocess.Popen(["open", BASE])
+        # --- popover content: header row above a webview ---
+        container = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, POPW, POPH))
 
-    def refresh(self, _):
-        try:
-            with urllib.request.urlopen(f"{BASE}/api/latest", timeout=5) as r:
-                j = json.load(r)
-        except Exception:
-            self.title = "—"
-            self.m5.title = "server not reachable"
-            return
+        conf = WKWebViewConfiguration.alloc().init()
+        self.web = WKWebView.alloc().initWithFrame_configuration_(
+            NSMakeRect(0, 0, POPW, POPH - HEADER_H), conf)
+        container.addSubview_(self.web)
 
-        status = j.get("status") or {}
-        latest = j.get("latest")
-        if status.get("state") == "error" or not latest:
-            self.title = "—"
-            self.m5.title = "5-hour: " + (status.get("message") or "no data")[:60]
-            return
+        header = NSView.alloc().initWithFrame_(
+            NSMakeRect(0, POPH - HEADER_H, POPW, HEADER_H))
 
-        self.title = title_for(latest)
-        h5 = title_for(latest)[len(f"{round(latest['fh'])}%"):] if latest.get("fh") is not None else ""
-        self.m5.title = f"5-hour: {pct(latest.get('fh'))}" + (f"  ·  resets in {h5}" if h5 else "")
-        self.m7.title = f"7-day: {pct(latest.get('sd'))}"
-        self.mo.title = f"Opus (7d): {pct(latest.get('so'))}"
-        self.ms.title = f"Sonnet (7d): {pct(latest.get('sn'))}"
-        c = latest.get("credits")
-        self.mc.title = "Extra credits: " + ("–" if c is None else f"${c:.2f}")
+        def mkbtn(title, x, w, action):
+            b = NSButton.alloc().initWithFrame_(NSMakeRect(x, 4, w, HEADER_H - 8))
+            b.setTitle_(title)
+            b.setBezelStyle_(NSBezelStyleRounded)
+            b.setFont_(NSFont.systemFontOfSize_(12))
+            b.setTarget_(self)
+            b.setAction_(action)
+            header.addSubview_(b)
+            return b
+
+        mkbtn("↻ Reload", 8, 92, "reload:")
+        mkbtn("Open in browser", 104, 150, "openBrowser:")
+        mkbtn("Quit", POPW - 70, 62, "quit:")
+        container.addSubview_(header)
+
+        vc = NSViewController.alloc().init()
+        vc.setView_(container)
+
+        self.popover = NSPopover.alloc().init()
+        self.popover.setContentSize_((POPW, POPH))
+        self.popover.setBehavior_(NSPopoverBehaviorTransient)
+        self.popover.setContentViewController_(vc)
+        self.web.loadRequest_(
+            NSURLRequest.requestWithURL_(NSURL.URLWithString_(BASE)))
+
+        # --- title refresh loop ---
+        self.refresh_(None)
+        self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            REFRESH_SEC, self, "refresh:", None, True)
+
+    # --- actions ---
+    def togglePopover_(self, _sender):
+        if self.popover.isShown():
+            self.popover.performClose_(None)
+        else:
+            btn = self.statusItem.button()
+            self.popover.showRelativeToRect_ofView_preferredEdge_(
+                btn.bounds(), btn, NSMinYEdge)
+            NSApp.activateIgnoringOtherApps_(True)
+
+    def reload_(self, _sender):
+        self.web.reloadFromOrigin_(None)
+
+    def openBrowser_(self, _sender):
+        NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(BASE))
+
+    def quit_(self, _sender):
+        NSApp.terminate_(None)
+
+    # --- title updating (fetch off the main thread, set on it) ---
+    def refresh_(self, _timer):
+        def work():
+            try:
+                with urllib.request.urlopen(f"{BASE}/api/latest", timeout=5) as r:
+                    title = title_for(json.load(r).get("latest"))
+            except Exception:
+                title = "…"
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "setTitle:", title, False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def setTitle_(self, title):
+        self.statusItem.button().setTitle_(title)
+
+
+def main():
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)  # no Dock icon
+    delegate = AppDelegate.alloc().init()
+    app.setDelegate_(delegate)
+    app.run()
 
 
 if __name__ == "__main__":
-    # Run as a menu-bar accessory (no Dock icon) when possible.
-    try:
-        from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
-        NSApplication.sharedApplication().setActivationPolicy_(
-            NSApplicationActivationPolicyAccessory)
-    except Exception:
-        pass
-    MenuBar().run()
+    main()

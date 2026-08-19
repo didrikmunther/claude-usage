@@ -1,4 +1,5 @@
 fastapi
 uvicorn[standard]
 curl_cffi
-rumps
+pyobjc-framework-Cocoa
+pyobjc-framework-WebKit
