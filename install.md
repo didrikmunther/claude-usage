@@ -7,11 +7,11 @@ possible; where a step needs the human (a GUI/Keychain prompt), stop and ask the
 ## 0. Preconditions — check, don't assume
 - **macOS only.** If `uname` is not `Darwin`, stop and tell the user it won't work.
 - **Python 3.9+** required: `python3 --version`.
-- At least one Claude/Codex source must be installed and signed in:
-  **Claude Code** (CLI, preferred — check for the `Claude Code-credentials`
-  Keychain item or `~/.claude/.credentials.json`), the **Claude desktop app**
-  (`~/Library/Application Support/Claude`), and/or **OpenAI Codex** (`~/.codex`).
-  If none exists, stop and ask the user to install/sign in first.
+- At least one Claude/Codex source must be installed and signed in: the
+  **Claude desktop app** (`~/Library/Application Support/Claude`, preferred —
+  allows fast polling), **Claude Code** (CLI fallback — `Claude Code-credentials`
+  Keychain item or `~/.claude/.credentials.json`), and/or **OpenAI Codex**
+  (`~/.codex`). If none exists, stop and ask the user to install/sign in first.
 
 ## 1. Clone the repo
 ```bash
@@ -30,10 +30,10 @@ that auto-start at login and keep-alive. It prints its own prerequisite errors i
 something is missing.
 
 ## 3. Approve the Keychain prompt — ASK THE USER
-On first launch macOS shows a prompt for a Keychain item (**`Claude Code-credentials`**
-for the CLI, or **`Claude Safe Storage`** for the desktop app). **You cannot click
-it.** Tell the user: *"macOS will pop up a Keychain prompt — click **Always Allow**."*
-(Without this, Claude data can't be read.)
+On first launch macOS shows a prompt for a Keychain item (**`Claude Safe Storage`**
+for the desktop app, or **`Claude Code-credentials`** if only the CLI is present).
+**You cannot click it.** Tell the user: *"macOS will pop up a Keychain prompt —
+click **Always Allow**."* (Without this, Claude data can't be read.)
 
 ## 4. Verify
 ```bash
@@ -45,10 +45,10 @@ clicking it drops down the full dashboard, or they can open
 **http://127.0.0.1:8787**.
 
 ## What it does (so you can reassure the user)
-Everything runs locally and binds `127.0.0.1` only. It reads Claude Code's OAuth
-token (or the desktop app's cookies as a fallback) and the Codex token from
-`~/.codex/auth.json`, calls the official Claude/OpenAI usage endpoints, and stores
-history in
+Everything runs locally and binds `127.0.0.1` only. It reads the Claude desktop
+app's cookies (or Claude Code's OAuth token as a fallback) and the Codex token
+from `~/.codex/auth.json`, calls the official Claude/OpenAI usage endpoints, and
+stores history in
 `~/.claude-usage/usage.db`. No telemetry, nothing sent anywhere else. The source
 (`poller.py`, `codex_poller.py`, `server.py`) is short and auditable.
 

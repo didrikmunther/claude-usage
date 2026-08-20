@@ -33,6 +33,12 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def desktop_available() -> bool:
+    """Is the Claude desktop app installed (has a cookie store)? Cheap check —
+    doesn't touch the Keychain."""
+    return os.path.isfile(os.path.join(SUPPORT, "Cookies"))
+
+
 def get_keychain_key() -> bytes:
     """Read the app's safe-storage password from the Keychain and derive the
     AES-128 key. This is the call that prompts for Keychain access at startup."""

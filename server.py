@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import os
+import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -27,6 +28,8 @@ DB_PATH = os.path.expanduser("~/.claude-usage/usage.db")
 HOST = os.environ.get("CLAUDE_USAGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "8787"))
 FETCH_TIMEOUT = 45      # hard cap on a single poll; guards against wake-from-sleep hangs
+CLAUDE_MIN_INTERVAL = 90  # Claude's usage endpoint is burst-limited; don't poll it
+                          # faster than this even if the UI interval is lower.
 
 app = FastAPI(title="Claude Usage")
 
@@ -49,6 +52,11 @@ class Hub:
         self.clients: set[WebSocket] = set()
         self._wake = asyncio.Event()
         self._fail_streak = 0
+        # Claude's usage endpoint rate-limits independently of Codex, so it gets
+        # its own cooldown: a 429 shouldn't be masked by a Codex success (which
+        # would otherwise keep us hammering the limited endpoint every interval).
+        self._claude_next = 0.0
+        self._claude_streak = 0
         # Dedicated pool: a poll thread stuck across a sleep/wake can't starve
         # the rest of the app, and a couple of stuck workers are tolerated.
         self._pool = concurrent.futures.ThreadPoolExecutor(
@@ -62,19 +70,23 @@ class Hub:
         self.interval = self.store.get_interval()
 
     def _pick_claude_source(self) -> str | None:
-        """Prefer the Claude Code CLI's OAuth token (no desktop app, no cookies,
-        no org id); fall back to the desktop cookie path if the CLI isn't set up."""
+        """Prefer the desktop app's cookie endpoint — it tolerates fast (60s)
+        polling. The CLI's api.anthropic.com/oauth/usage endpoint is burst-limited
+        (429s under frequent polling), so it's the fallback for machines that
+        don't have the desktop app."""
+        if poller.desktop_available():
+            try:
+                self.key = poller.get_keychain_key()   # prompts for Keychain
+                self.org = poller.detect_org()
+                print("[claude] source: desktop app cookies")
+                return "desktop"
+            except SystemExit as e:
+                print(f"[claude] desktop present but unusable ({e}); trying CLI")
         if claude_cli.available():
-            print("[claude] source: CLI OAuth token")
+            print("[claude] source: CLI OAuth token (rate-limited; polled gently)")
             return "cli"
-        try:
-            self.key = poller.get_keychain_key()   # prompts for Keychain
-            self.org = poller.detect_org()
-            print("[claude] source: desktop app cookies")
-            return "desktop"
-        except SystemExit as e:
-            print(f"[claude] no usable source, skipping Claude polling: {e}")
-            return None
+        print("[claude] no usable Claude source; skipping Claude polling")
+        return None
 
     async def broadcast(self, msg: dict):
         dead = []
@@ -117,6 +129,15 @@ class Hub:
     def _errmsg(who, e):
         return f"{who}: " + ("timed out" if isinstance(e, asyncio.TimeoutError) else str(e))
 
+    def _cooldown_claude(self, retry_after: int) -> str:
+        """Back Claude off after a 429: honor retry-after when useful, else grow
+        60s → 120 → 240 … capped at 15 min. Keeps the last known value showing."""
+        self._claude_streak += 1
+        wait = retry_after if retry_after and retry_after > 0 else min(
+            900, 60 * (2 ** self._claude_streak))
+        self._claude_next = time.time() + wait
+        return f"Claude: rate-limited, backing off {int(wait)}s"
+
     async def _poll_once(self):
         loop = asyncio.get_running_loop()
         ts = poller.now_ms()
@@ -124,14 +145,23 @@ class Hub:
         claude_live = codex_live = None
         errs = []
 
-        if self.claude_src:
+        if self.claude_src and time.time() >= self._claude_next:
             try:
                 crow, claude_live = await asyncio.wait_for(
                     loop.run_in_executor(self._pool, self._fetch_claude, ts),
                     timeout=FETCH_TIMEOUT)
                 row.update(crow)
+                self._claude_streak = 0
+                # Desktop tolerates the UI interval; only throttle the CLI source.
+                self._claude_next = time.time() + (
+                    CLAUDE_MIN_INTERVAL if self.claude_src == "cli" else 0.0)
+            except claude_cli.RateLimited as e:
+                errs.append(self._cooldown_claude(e.retry_after))
             except Exception as e:
-                errs.append(self._errmsg("Claude", e))
+                if "429" in str(e):                       # desktop path 429s too
+                    errs.append(self._cooldown_claude(0))
+                else:
+                    errs.append(self._errmsg("Claude", e))
 
         if self.codex_available:
             try:

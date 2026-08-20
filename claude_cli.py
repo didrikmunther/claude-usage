@@ -21,6 +21,15 @@ USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 OAUTH_BETA = "oauth-2025-04-20"
 
 
+class RateLimited(RuntimeError):
+    """429 from the usage endpoint. `retry_after` is seconds from the header
+    (0 when the server didn't give a useful value)."""
+
+    def __init__(self, retry_after: int = 0):
+        super().__init__(f"rate-limited (retry-after {retry_after}s)")
+        self.retry_after = retry_after
+
+
 def _keychain_secret() -> str | None:
     """Read the credential blob from the Keychain (-w prompts once, like the
     desktop key does; the user can pick 'Always Allow')."""
@@ -87,6 +96,12 @@ def fetch_usage() -> dict:
             "Claude CLI token expired — run any `claude` command to refresh it, "
             "then retry."
         )
+    if r.status_code == 429:
+        try:
+            ra = int(float(r.headers.get("retry-after", 0)))
+        except (TypeError, ValueError):
+            ra = 0
+        raise RateLimited(ra)
     r.raise_for_status()
     return r.json()
 
