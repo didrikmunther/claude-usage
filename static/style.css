@@ -74,6 +74,15 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
   .updatebar { background: #1e1b4b; color: #c7d2fe; border-color: #3730a3; }
 }
 
+/* usage bars + burn-rate gauge side by side */
+.usage-row { display: flex; align-items: center; gap: 18px; margin-bottom: 28px; }
+.usage-row .bars { flex: 1; margin-bottom: 0; }
+.gauge { width: 148px; flex-shrink: 0; text-align: center; }
+.gauge-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 1px; }
+.gauge-svg { width: 100%; height: auto; display: block; }
+.gauge-val { fill: var(--ink); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+@media (max-width: 480px) { .usage-row { flex-direction: column; align-items: stretch; } .gauge { width: 100%; max-width: 180px; margin: 0 auto; } }
+
 .bars { display: grid; gap: 18px; margin-bottom: 28px; }
 .bar-row { display: grid; grid-template-columns: 120px 1fr 56px; align-items: center; gap: 16px; }
 .bar-label { font-size: 13px; font-weight: 500; }

@@ -36,61 +36,59 @@ CLAUDE_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.388, 0.400, 0.945, 1
 CODEX_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.961, 0.620, 0.043, 1.0)
 
 
-def _draw_sunburst(cx, cy, r, color):
-    """Claude: a small radiating sunburst (Anthropic-ish asterisk)."""
-    color.set()
-    p = NSBezierPath.bezierPath()
-    n = 10
-    for i in range(n):
-        a = 2 * math.pi * i / n
-        p.moveToPoint_(NSMakePoint(cx, cy))
-        p.lineToPoint_(NSMakePoint(cx + math.cos(a) * r, cy + math.sin(a) * r))
-    p.setLineWidth_(max(1.0, r * 0.24))
-    p.setLineCapStyle_(1)          # round
-    p.stroke()
+GAUGE_MAX = 60.0   # %/h full-scale, matches the web gauge
 
 
-def _draw_hexagon(cx, cy, r, color):
-    """Codex: a hexagon outline — a distinct silhouette from the sunburst."""
+def _draw_gauge(cx, cy, box_r, rate, color):
+    """Mini speedometer: a faint platform-colored arc with a needle whose angle
+    encodes the burn rate (0 → left, GAUGE_MAX → right). AppKit coords are y-up."""
+    px, py = cx, cy - box_r * 0.5          # pivot low in the box; arc rises above
+    ra = box_r
+    v = max(0.0, min(GAUGE_MAX, rate or 0.0))
+    deg = 180.0 * (1 - v / GAUGE_MAX)      # 0%→180° (left), max→0° (right)
+
+    arc = NSBezierPath.bezierPath()
+    arc.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_(
+        NSMakePoint(px, py), ra, 0.0, 180.0)     # top semicircle (CCW 0→180)
+    color.colorWithAlphaComponent_(0.4).set()
+    arc.setLineWidth_(max(0.8, box_r * 0.22))
+    arc.stroke()
+
+    a = math.radians(deg)
+    needle = NSBezierPath.bezierPath()
+    needle.moveToPoint_(NSMakePoint(px, py))
+    needle.lineToPoint_(NSMakePoint(px + ra * 0.9 * math.cos(a), py + ra * 0.9 * math.sin(a)))
     color.set()
-    p = NSBezierPath.bezierPath()
-    for i in range(6):
-        a = math.pi / 2 + 2 * math.pi * i / 6      # flat-ish, point up
-        pt = NSMakePoint(cx + math.cos(a) * r, cy + math.sin(a) * r)
-        p.moveToPoint_(pt) if i == 0 else p.lineToPoint_(pt)
-    p.closePath()
-    p.setLineWidth_(max(1.0, r * 0.30))
-    p.setLineJoinStyle_(1)         # round
-    p.stroke()
+    needle.setLineWidth_(max(1.0, box_r * 0.28))
+    needle.setLineCapStyle_(1)
+    needle.stroke()
 
 
 def render_menubar_image(lines):
-    """Build the status-item image: one row per source (icon + text). One line
-    when a single source has data, two stacked smaller lines when both do.
-    Returns None when there's nothing to show."""
+    """Build the status-item image: one row per source (mini burn-rate gauge +
+    text). One line when a single source has data, two stacked smaller lines when
+    both do. `lines` are (kind, text, rate). Returns None when nothing to show."""
     if not lines:
         return None
     two = len(lines) >= 2
     font = NSFont.monospacedDigitSystemFontOfSize_weight_(9.5 if two else 12.5, 0.0)
     text_color = NSColor.labelColor()
-    ICON = 9.0 if two else 12.0
+    ICON = 11.0 if two else 14.0           # a gauge needs a touch more width than a dot
     GAP, LPAD, RPAD, HEIGHT = 3.0, 2.0, 2.0, 22.0
     row_h = HEIGHT / 2 if two else HEIGHT
 
     attrs = {NSFontAttributeName: font, NSForegroundColorAttributeName: text_color}
-    strs = [NSAttributedString.alloc().initWithString_attributes_(t, attrs) for _, t in lines]
+    strs = [NSAttributedString.alloc().initWithString_attributes_(t, attrs) for _, t, _ in lines]
     text_w = max((s.size().width for s in strs), default=0.0)
     width = math.ceil(LPAD + ICON + GAP + text_w + RPAD)
 
     img = NSImage.alloc().initWithSize_(NSMakeSize(width, HEIGHT))
     img.lockFocus()
-    for i, ((kind, _text), s) in enumerate(zip(lines, strs)):
+    for i, ((kind, _text, rate), s) in enumerate(zip(lines, strs)):
         row_y = HEIGHT - row_h * (i + 1)           # first line on top
-        r = ICON / 2
-        cx = LPAD + r
+        cx = LPAD + ICON / 2
         cy = row_y + row_h / 2
-        (_draw_sunburst if kind == "claude" else _draw_hexagon)(
-            cx, cy, r, CLAUDE_COLOR if kind == "claude" else CODEX_COLOR)
+        _draw_gauge(cx, cy, ICON / 2, rate, CLAUDE_COLOR if kind == "claude" else CODEX_COLOR)
         ts = s.size()
         s.drawAtPoint_(NSMakePoint(LPAD + ICON + GAP, row_y + (row_h - ts.height) / 2))
     img.unlockFocus()
@@ -159,6 +157,9 @@ class AppDelegate(NSObject):
             self.popover.showRelativeToRect_ofView_preferredEdge_(
                 btn.bounds(), btn, NSMinYEdge)
             NSApp.activateIgnoringOtherApps_(True)
+            # Rev the gauges on every open (the webview stays loaded between opens).
+            self.web.evaluateJavaScript_completionHandler_(
+                "window.revGauges && window.revGauges()", None)
 
     def reload_(self, _sender):
         self.web.reloadFromOrigin_(None)
@@ -175,7 +176,10 @@ class AppDelegate(NSObject):
             try:
                 with urllib.request.urlopen(f"{BASE}/api/latest", timeout=5) as r:
                     d = json.load(r)
-                self._lines = lines_for(d.get("latest"), d.get("codex"))
+                rate = {"claude": d.get("claude_rate") or 0.0,
+                        "codex": d.get("codex_rate") or 0.0}
+                self._lines = [(k, t, rate.get(k, 0.0))
+                               for (k, t) in lines_for(d.get("latest"), d.get("codex"))]
             except Exception:
                 self._lines = []
             self.performSelectorOnMainThread_withObject_waitUntilDone_(

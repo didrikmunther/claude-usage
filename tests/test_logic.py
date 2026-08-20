@@ -105,6 +105,19 @@ def test_pick_latest():
     assert pick_latest([]) is None
 
 
+def test_burn_rate():
+    from server import burn_rate                    # imported here: pulls in FastAPI app
+    base = 1_000_000
+    rising = [{"ts": base + i * 60_000, "fh": 30.0 + i} for i in range(6)]   # +1%/min
+    assert round(burn_rate(rising, "fh")) == 60      # %/hour
+    flat = [{"ts": base + i * 60_000, "fh": 40.0} for i in range(6)]
+    assert burn_rate(flat, "fh") == 0.0
+    assert burn_rate(rising[:2], "fh") == 0.0        # too few points
+    nones = [{"ts": base + i * 60_000, "fh": None} for i in range(6)]
+    assert burn_rate(nones, "fh") == 0.0             # all missing → 0
+    assert burn_rate([], "fh") == 0.0
+
+
 def test_is_newer():
     assert is_newer("v1.2.0", "1.1.0") is True
     assert is_newer("v1.1.0", "1.1.0") is False   # equal -> no update

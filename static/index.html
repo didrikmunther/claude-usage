@@ -31,18 +31,21 @@
       <section class="col" id="colClaude">
         <div class="col-head"><span id="dot" class="dot"></span><span class="col-title claude">Claude</span></div>
 
-        <section class="bars">
-          <div class="bar-row">
-            <div class="bar-label">5-hour<span id="fhReset" class="reset muted"></span></div>
-            <div class="track"><div id="fhFill" class="fill fh"></div></div>
-            <div id="fhPct" class="pct">–</div>
-          </div>
-          <div class="bar-row">
-            <div class="bar-label">7-day<span id="sdReset" class="reset muted"></span></div>
-            <div class="track"><div id="sdFill" class="fill sd"></div></div>
-            <div id="sdPct" class="pct">–</div>
-          </div>
-        </section>
+        <div class="usage-row">
+          <section class="bars">
+            <div class="bar-row">
+              <div class="bar-label">5-hour<span id="fhReset" class="reset muted"></span></div>
+              <div class="track"><div id="fhFill" class="fill fh"></div></div>
+              <div id="fhPct" class="pct">–</div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label">7-day<span id="sdReset" class="reset muted"></span></div>
+              <div class="track"><div id="sdFill" class="fill sd"></div></div>
+              <div id="sdPct" class="pct">–</div>
+            </div>
+          </section>
+          <div class="gauge"><div class="gauge-cap">burn rate</div><div id="claudeGauge"></div></div>
+        </div>
 
         <section class="card chart-card">
           <div class="chart-head">
@@ -84,7 +87,10 @@
           <span id="cxSource" class="muted src"></span>
         </div>
 
-        <section id="cxBars" class="bars"></section>
+        <div class="usage-row">
+          <section id="cxBars" class="bars"></section>
+          <div class="gauge"><div class="gauge-cap">burn rate</div><div id="codexGauge"></div></div>
+        </div>
 
         <section class="card chart-card">
           <div class="chart-head">

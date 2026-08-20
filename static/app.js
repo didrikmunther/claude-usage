@@ -272,6 +272,15 @@ function recentSlope(pts, lookbackSec, nowSec) {
   return (n * sxy - sx * sy) / den;              // %/sec
 }
 
+// Trailing-window burn rate in %-points/hour for the gauge. Clamped to 0 so an
+// idle stretch or a post-reset dip reads as "stopped", not negative.
+function burnRate(tsArr, yArr, nowSec, lookbackSec = 300) {
+  const pts = [];
+  for (let i = 0; i < tsArr.length; i++) if (yArr[i] != null) pts.push([tsArr[i], yArr[i]]);
+  const slope = recentSlope(pts, lookbackSec, nowSec);   // %/sec or null
+  return slope == null ? 0 : Math.max(0, slope * 3600);  // %/hour
+}
+
 // Forecast for one window. "already used" (cur%) stays anchored to the reset; the
 // FORWARD pace uses the recent weighted rate when history is available, else the
 // cycle average. Returns {cls, msg, rate} or null.
@@ -620,6 +629,8 @@ function connect() {
       if (m.update) renderUpdate(m.update);
       setIntervalUI(m.interval);
       setStatus(m.status);
+      updateGauges();                       // set targets from history before revving
+      if (!revvedOnce) { revvedOnce = true; window.revGauges(); }
     } else if (m.type === "sample") {
       if (m.claude) { pushPoint(C, m.claude.ts / 1000, m.claude.fh, m.claude.sd); renderClaude(m.claude); }
       if (m.codex) { pushPoint(X, m.codex.ts / 1000, m.codex.cp, m.codex.cs); renderCodex(m.codex); }
@@ -637,6 +648,78 @@ function connect() {
 }
 
 // ---- 1-second tick: keep countdowns + forecasts fresh ----
+// ---- burn-rate gauges (speedometer of last-5-min %/h) ----
+const GAUGE_MAX = 60;   // %/h full-scale
+let claudeGauge = null, codexGauge = null, revvedOnce = false;
+
+function makeGauge(elId) {
+  const el = $(elId);
+  if (!el) return { update() {} };
+  const cx = 75, cy = 72, R = 56, rz = R - 4;
+  const ang = (v) => 180 * (1 - Math.min(Math.max(v, 0), GAUGE_MAX) / GAUGE_MAX);  // deg
+  const pol = (r, deg) => { const a = deg * Math.PI / 180; return [cx + r * Math.cos(a), cy - r * Math.sin(a)]; };
+  const arc = (r, v1, v2) => {
+    const [x1, y1] = pol(r, ang(v1)), [x2, y2] = pol(r, ang(v2));
+    return `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+  };
+  const zones = [[0, 20, "#22c55e"], [20, 40, "#f59e0b"], [40, 60, "#ef4444"]]
+    .map(([a, b, c]) => `<path d="${arc(rz, a, b)}" fill="none" stroke="${c}" stroke-width="6" opacity=".9"/>`).join("");
+  let ticks = "";
+  for (let v = 0; v <= GAUGE_MAX; v += 10) {
+    const [x1, y1] = pol(R, ang(v)), [x2, y2] = pol(R - 7, ang(v));
+    ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--muted)" stroke-width="1"/>`;
+  }
+  const [nx, ny] = pol(R - 12, ang(0));
+  el.innerHTML = `<svg viewBox="0 0 150 96" class="gauge-svg">${zones}${ticks}
+    <line id="${elId}-n" x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="var(--ink)" stroke-width="2.5" stroke-linecap="round"/>
+    <circle cx="${cx}" cy="${cy}" r="3.5" fill="var(--ink)"/>
+    <text id="${elId}-v" x="${cx}" y="93" text-anchor="middle" class="gauge-val">– %/h</text></svg>`;
+  const needle = $(`${elId}-n`), val = $(`${elId}-v`);
+  const setNeedle = (r) => {
+    const [x2, y2] = pol(R - 12, ang(r));
+    needle.setAttribute("x2", x2.toFixed(1));
+    needle.setAttribute("y2", y2.toFixed(1));
+    val.textContent = `${Math.round(r)} %/h`;
+    val.style.fill = r < 20 ? "#16a34a" : r < 40 ? "#d97706" : "#dc2626";
+  };
+  // One always-on animation loop drives the needle so it never jumps: normally
+  // it eases toward `target` (the live rate); during a rev it follows the
+  // ignition sweep, which itself settles onto `target`.
+  const REV_DUR = 1100, SMOOTH = 0.12;
+  let target = 0, cur = 0, revActive = false, revStart = 0;
+  const loop = (now) => {
+    if (revActive) {
+      const t = Math.min(1, (now - revStart) / REV_DUR);
+      cur = t < 0.5
+        ? GAUGE_MAX * (1 - (1 - t / 0.5) ** 2)                        // rise to redline
+        : GAUGE_MAX + (target - GAUGE_MAX) * (1 - (1 - (t - 0.5) / 0.5) ** 2); // fall → live
+      if (t >= 1) revActive = false;
+    } else {
+      cur += (target - cur) * SMOOTH;                                 // exponential ease
+      if (Math.abs(target - cur) < 0.03) cur = target;
+    }
+    setNeedle(cur);
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+  return {
+    update(rate) { target = rate || 0; },
+    rev() { revActive = true; revStart = performance.now(); },
+  };
+}
+
+// Rev both gauges — called on page load and by the menu bar on each popover open.
+window.revGauges = () => { if (claudeGauge) claudeGauge.rev(); if (codexGauge) codexGauge.rev(); };
+
+function updateGauges() {
+  const now = Date.now() / 1000;
+  if (claudeGauge) claudeGauge.update(burnRate(C.data[0], C.data[1], now));
+  if (codexGauge) {
+    const ci = X.data[1].some((v) => v != null) ? 1 : 2;   // primary window, else secondary
+    codexGauge.update(burnRate(X.data[0], X.data[ci], now));
+  }
+}
+
 function tick() {
   renderClaudeResets();
   renderClaudeForecast();
@@ -644,6 +727,7 @@ function tick() {
     el.textContent = countdown(el.dataset.reset);
   });
   renderCodexForecast();
+  updateGauges();
 }
 
 // ---- boot ----
@@ -670,6 +754,8 @@ window.addEventListener("load", () => {
   wireSpikeWin();
   wireUpdate();
   wireCheckUpdate();
-  connect();
+  claudeGauge = makeGauge("claudeGauge");
+  codexGauge = makeGauge("codexGauge");
+  connect();   // rev fires from the first WS "init", once the live rate is known
   setInterval(tick, 1000);
 });

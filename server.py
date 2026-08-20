@@ -36,6 +36,29 @@ UPDATE_CHECK_INTERVAL = 6 * 3600   # how often to look for a new release
 app = FastAPI(title="Claude Usage")
 
 
+def burn_rate(samples: list[dict], key: str, lookback_ms: int = 300_000) -> float:
+    """%-points/hour over the trailing window (least-squares slope of `key`),
+    clamped to 0. Mirrors the dashboard's recentSlope so the menu-bar gauge and
+    the web gauge agree. `samples` are storage rows (ts in ms), ascending."""
+    if not samples:
+        return 0.0
+    cut = samples[-1]["ts"] - lookback_ms
+    pts = [(s["ts"] / 1000.0, s[key]) for s in samples
+           if s.get(key) is not None and s["ts"] >= cut]
+    if len(pts) < 3 or pts[-1][0] - pts[0][0] < 180:
+        return 0.0
+    n = len(pts)
+    t0 = pts[0][0]
+    sx = sy = sxx = sxy = 0.0
+    for t, y in pts:
+        x = t - t0
+        sx += x; sy += y; sxx += x * x; sxy += x * y
+    den = n * sxx - sx * sx
+    if abs(den) < 1e-9:
+        return 0.0
+    return max(0.0, (n * sxy - sx * sy) / den * 3600.0)   # %/sec → %/hour
+
+
 class Hub:
     """Shared state + the poll loop."""
 
@@ -110,6 +133,15 @@ class Hub:
 
     def poll_now(self):
         self._wake.set()
+
+    def rates(self) -> dict:
+        """Current 5-min burn rate (%/h) per platform, for the menu-bar gauge."""
+        if not self.store:
+            return {"claude_rate": 0.0, "codex_rate": 0.0}
+        hist = self.store.history(since_ms=poller.now_ms() - 360_000)
+        ckey = "cp" if any(s.get("cp") is not None for s in hist) else "cs"
+        return {"claude_rate": round(burn_rate(hist, "fh"), 1),
+                "codex_rate": round(burn_rate(hist, ckey), 1)}
 
     async def check_update(self) -> dict:
         """Run the release check immediately (used by the 'Check for updates'
@@ -247,7 +279,7 @@ async def api_latest():
                          "codex": hub.codex_latest,
                          "codex_available": hub.codex_available,
                          "cc": hub.cc_latest, "cc_available": hub.cc_available,
-                         "update": hub.update_info,
+                         "update": hub.update_info, **hub.rates(),
                          "status": hub.status, "interval": hub.interval})
 
 
