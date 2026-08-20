@@ -541,6 +541,29 @@ function renderCC(cc) {
     : "";
 }
 
+// ---- self-update banner ----
+function renderUpdate(info) {
+  if (!info) return;
+  const v = $("version");
+  if (v) v.textContent = info.current ? "v" + info.current : "";
+  const bar = $("updateBar");
+  if (info.update_available && info.latest) {
+    $("updateMsg").textContent = `Update available: v${info.current} → ${info.latest}`;
+    $("updateBtn").disabled = false;
+    bar.hidden = false;
+  } else {
+    bar.hidden = true;
+  }
+}
+
+function wireUpdate() {
+  $("updateBtn").addEventListener("click", async () => {
+    $("updateBtn").disabled = true;
+    $("updateMsg").textContent = "Updating… the app will restart in a moment.";
+    try { await fetch("/api/update", { method: "POST" }); } catch (e) { /* server restarts */ }
+  });
+}
+
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   sendInterval = (v) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ set_interval: v }));
@@ -558,6 +581,7 @@ function connect() {
       if (m.claude) renderClaude(m.claude);
       if (m.codex) renderCodex(m.codex);
       if (m.cc) renderCC(m.cc);
+      if (m.update) renderUpdate(m.update);
       setIntervalUI(m.interval);
       setStatus(m.status);
     } else if (m.type === "sample") {
@@ -566,6 +590,8 @@ function connect() {
       setStatus(m.status);
     } else if (m.type === "cc") {
       renderCC(m.cc);
+    } else if (m.type === "update") {
+      renderUpdate(m.update);
     } else if (m.type === "status") {
       setStatus(m.status);
     } else if (m.type === "interval") {
@@ -606,6 +632,7 @@ window.addEventListener("load", () => {
   wireControls();
   wireRange();
   wireSpikeWin();
+  wireUpdate();
   connect();
   setInterval(tick, 1000);
 });

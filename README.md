@@ -95,6 +95,27 @@ Run in the foreground for development:
 .venv/bin/pytest tests/         # pure-logic tests (no Keychain/network)
 ```
 
+## Updating
+
+The app checks for new releases on startup and every ~6h (via `git ls-remote
+--tags` — no GitHub token needed). When a newer release exists, the dashboard
+shows an **"Update available"** banner with an **Update now** button: clicking it
+checks out the tag, reinstalls deps if they changed, and restarts the agents. The
+current version shows in the footer.
+
+Updates only apply to a clean checkout that's in sync with origin — a checkout
+with local edits or unpushed commits is left untouched.
+
+**Cutting a release (maintainer):**
+
+```bash
+./release.sh 0.2.0    # bump VERSION, commit, tag v0.2.0, push
+```
+
+> The check reaches GitHub over your existing git auth, so on a **private** repo
+> only accounts with access can update. Make the repo public for others to
+> auto-update.
+
 ## Uninstall
 
 ```bash

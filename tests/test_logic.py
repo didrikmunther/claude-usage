@@ -12,6 +12,7 @@ import datetime  # noqa: E402
 from poller import normalize  # noqa: E402
 from storage import Store, DEFAULT_INTERVAL, MIN_INTERVAL, MAX_INTERVAL  # noqa: E402
 from menubar_fmt import pct, hours_until, title_for  # noqa: E402
+from updater import parse_version, pick_latest, is_newer  # noqa: E402
 
 FIXTURE = json.load(open(os.path.join(os.path.dirname(__file__), "fixture_usage.json")))
 
@@ -84,3 +85,30 @@ def test_title_for():
     assert title_for({"fh": 35.0, "resets": {}}, now=_BASE) == "35%"   # no reset -> pct only
     assert title_for({"fh": None}) == "—"
     assert title_for(None) == "—"
+
+
+def test_parse_version():
+    assert parse_version("v1.2.3") == (1, 2, 3)
+    assert parse_version("1.2.3") == (1, 2, 3)
+    assert parse_version(" v0.10.0 ") == (0, 10, 0)
+    assert parse_version("v1.2") is None          # not full semver
+    assert parse_version("v1.2.3-rc1") is None    # pre-release ignored
+    assert parse_version("nightly") is None
+    assert parse_version(None) is None
+
+
+def test_pick_latest():
+    assert pick_latest(["v1.0.0", "v1.2.0", "v1.1.5"]) == "v1.2.0"
+    assert pick_latest(["v0.9.0", "v0.10.0"]) == "v0.10.0"   # numeric, not lexical
+    assert pick_latest(["v1.0.0", "garbage", "v2.0.0-rc1"]) == "v1.0.0"
+    assert pick_latest(["nope", "still-nope"]) is None
+    assert pick_latest([]) is None
+
+
+def test_is_newer():
+    assert is_newer("v1.2.0", "1.1.0") is True
+    assert is_newer("v1.1.0", "1.1.0") is False   # equal -> no update
+    assert is_newer("v1.0.0", "1.2.0") is False
+    assert is_newer(None, "1.0.0") is False        # nothing remote
+    assert is_newer("v1.0.0", None) is True        # unknown local -> update
+    assert is_newer("v0.10.0", "0.9.0") is True    # numeric compare

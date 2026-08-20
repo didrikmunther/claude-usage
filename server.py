@@ -20,6 +20,7 @@ import ccost
 import claude_cli
 import codex_poller
 import poller
+import updater
 from storage import Store, MIN_INTERVAL, MAX_INTERVAL
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +31,7 @@ PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "8787"))
 FETCH_TIMEOUT = 45      # hard cap on a single poll; guards against wake-from-sleep hangs
 CLAUDE_MIN_INTERVAL = 90  # Claude's usage endpoint is burst-limited; don't poll it
                           # faster than this even if the UI interval is lower.
+UPDATE_CHECK_INTERVAL = 6 * 3600   # how often to look for a new release
 
 app = FastAPI(title="Claude Usage")
 
@@ -57,6 +59,9 @@ class Hub:
         # would otherwise keep us hammering the limited endpoint every interval).
         self._claude_next = 0.0
         self._claude_streak = 0
+        self.update_info: dict = {"current": updater.current_version(),
+                                  "latest": None, "update_available": False}
+        self._update_next = 0.0
         # Dedicated pool: a poll thread stuck across a sleep/wake can't starve
         # the rest of the app, and a couple of stuck workers are tolerated.
         self._pool = concurrent.futures.ThreadPoolExecutor(
@@ -199,6 +204,17 @@ class Hub:
             except Exception:
                 pass
 
+        if time.time() >= self._update_next:
+            self._update_next = time.time() + UPDATE_CHECK_INTERVAL
+            try:
+                info = await asyncio.wait_for(
+                    loop.run_in_executor(self._pool, updater.check),
+                    timeout=FETCH_TIMEOUT)
+                self.update_info = info
+                await self.broadcast({"type": "update", "update": info})
+            except Exception:
+                pass
+
 
 hub = Hub()
 
@@ -220,7 +236,21 @@ async def api_latest():
                          "codex": hub.codex_latest,
                          "codex_available": hub.codex_available,
                          "cc": hub.cc_latest, "cc_available": hub.cc_available,
+                         "update": hub.update_info,
                          "status": hub.status, "interval": hub.interval})
+
+
+@app.post("/api/update")
+async def api_update():
+    info = hub.update_info
+    tag = info.get("latest")
+    if not info.get("update_available") or not tag:
+        return JSONResponse({"ok": False, "error": "no update available"}, status_code=400)
+    try:
+        updater.spawn_apply(tag)                    # detached; restarts us shortly
+        return JSONResponse({"ok": True, "applying": tag})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 @app.get("/api/history")
@@ -240,6 +270,7 @@ async def ws(sock: WebSocket):
         "codex_available": hub.codex_available,
         "cc": hub.cc_latest,
         "cc_available": hub.cc_available,
+        "update": hub.update_info,
         "status": hub.status,
         "interval": hub.interval,
         "limits": {"min": MIN_INTERVAL, "max": MAX_INTERVAL},

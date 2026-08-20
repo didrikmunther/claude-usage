@@ -52,6 +52,24 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
 }
 @media (prefers-color-scheme: dark) { .banner { background:#2a1315; color:#f9a8a8; border-color:#4a2225; } }
 
+/* update-available banner */
+.updatebar {
+  display: flex; align-items: center; gap: 12px;
+  background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe;
+  padding: 10px 14px; border-radius: 10px; font-size: 13px; margin-bottom: 20px;
+}
+.updatebar #updateMsg { flex: 1; font-variant-numeric: tabular-nums; }
+.upd-btn {
+  border: 0; background: var(--fh); color: #fff; border-radius: 8px;
+  padding: 6px 14px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.upd-btn:hover { filter: brightness(1.06); }
+.upd-btn:disabled { opacity: .6; cursor: default; }
+.ver { margin-left: 10px; font-variant-numeric: tabular-nums; }
+@media (prefers-color-scheme: dark) {
+  .updatebar { background: #1e1b4b; color: #c7d2fe; border-color: #3730a3; }
+}
+
 .bars { display: grid; gap: 18px; margin-bottom: 28px; }
 .bar-row { display: grid; grid-template-columns: 120px 1fr 56px; align-items: center; gap: 16px; }
 .bar-label { font-size: 13px; font-weight: 500; }
