@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import ccost
+import claude_cli
 import codex_poller
 import poller
 from storage import Store, MIN_INTERVAL, MAX_INTERVAL
@@ -36,6 +37,7 @@ class Hub:
     def __init__(self):
         self.key: bytes | None = None
         self.org: str = poller.DEFAULT_ORG
+        self.claude_src: str | None = None   # "cli" | "desktop" | None
         self.store: Store | None = None
         self.interval: int = 60
         self.latest: dict | None = None
@@ -53,12 +55,26 @@ class Hub:
             max_workers=3, thread_name_prefix="poll")
 
     def start(self):
-        self.key = poller.get_keychain_key()   # prompts for Keychain at startup
-        self.org = poller.detect_org()
+        self.claude_src = self._pick_claude_source()
         self.codex_available = codex_poller.available()
         self.cc_available = ccost.available()
         self.store = Store(DB_PATH)
         self.interval = self.store.get_interval()
+
+    def _pick_claude_source(self) -> str | None:
+        """Prefer the Claude Code CLI's OAuth token (no desktop app, no cookies,
+        no org id); fall back to the desktop cookie path if the CLI isn't set up."""
+        if claude_cli.available():
+            print("[claude] source: CLI OAuth token")
+            return "cli"
+        try:
+            self.key = poller.get_keychain_key()   # prompts for Keychain
+            self.org = poller.detect_org()
+            print("[claude] source: desktop app cookies")
+            return "desktop"
+        except SystemExit as e:
+            print(f"[claude] no usable source, skipping Claude polling: {e}")
+            return None
 
     async def broadcast(self, msg: dict):
         dead = []
@@ -91,7 +107,10 @@ class Hub:
             self._wake.clear()
 
     def _fetch_claude(self, ts):
-        raw = poller.fetch_usage(self.key, self.org)
+        if self.claude_src == "cli":
+            raw = claude_cli.fetch_usage()
+        else:
+            raw = poller.fetch_usage(self.key, self.org)
         return poller.normalize(raw, ts)          # (row, live)
 
     @staticmethod
@@ -105,7 +124,7 @@ class Hub:
         claude_live = codex_live = None
         errs = []
 
-        if self.key:
+        if self.claude_src:
             try:
                 crow, claude_live = await asyncio.wait_for(
                     loop.run_in_executor(self._pool, self._fetch_claude, ts),

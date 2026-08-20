@@ -15,7 +15,7 @@ echo "→ project: $DIR"
 
 # --- prerequisites ---
 if [ "$(uname)" != "Darwin" ]; then
-  echo "✗ macOS only (needs the Keychain + the Claude/Codex desktop apps)." >&2
+  echo "✗ macOS only (needs the Keychain + Claude Code / Claude / Codex)." >&2
   exit 1
 fi
 if ! command -v python3 >/dev/null 2>&1; then
@@ -26,8 +26,14 @@ if ! python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 9) else 1
   echo "✗ Python 3.9+ required (found $(python3 -V 2>&1))." >&2
   exit 1
 fi
-if [ ! -d "$HOME/Library/Application Support/Claude" ] && [ ! -d "$HOME/.codex" ]; then
-  echo "✗ Neither the Claude desktop app nor OpenAI Codex was found." >&2
+has_claude_cli=false
+if security find-generic-password -s "Claude Code-credentials" >/dev/null 2>&1 \
+   || [ -f "$HOME/.claude/.credentials.json" ]; then
+  has_claude_cli=true
+fi
+if ! $has_claude_cli \
+   && [ ! -d "$HOME/Library/Application Support/Claude" ] && [ ! -d "$HOME/.codex" ]; then
+  echo "✗ None of Claude Code (CLI), the Claude desktop app, or OpenAI Codex was found." >&2
   echo "  Install and sign in to at least one, then re-run." >&2
   exit 1
 fi
@@ -124,8 +130,9 @@ reload_agent "$LABEL" "$PLIST"
 reload_agent "$MB_LABEL" "$MB_PLIST"
 
 echo
-echo "✓ installed. On first launch macOS will ask for the 'Claude Safe Storage'"
-echo "  Keychain item — click 'Always Allow'."
+echo "✓ installed. On first launch macOS will ask for a Keychain item"
+echo "  ('Claude Code-credentials' for the CLI, or 'Claude Safe Storage' for the"
+echo "  desktop app) — click 'Always Allow'."
 echo "  Dashboard:  http://127.0.0.1:$PORT"
 echo "  Menu bar:   shows e.g. '35%4.1h' (5-hour % + hours to reset)"
 echo "  Logs:       $DATA/server.log · $DATA/menubar.log (+ *.err.log)"

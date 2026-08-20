@@ -24,15 +24,16 @@ spike markers.
   full), a "used this range" tally, per-window forecasts, and hover-to-reveal
   markers on your biggest spikes.
 
-> macOS only. It's a companion to the Claude desktop app and/or the Codex app —
-> it reads their local session, it does not log in for you.
+> macOS only. It's a companion to Claude Code / the Claude desktop app and/or the
+> Codex app — it reads their local session, it does not log in for you.
 
 ## Requirements
 
 - **macOS**
 - **Python 3.9+** (`python3 --version`)
-- The **Claude desktop app** and/or **OpenAI Codex** installed and signed in
-  (you need at least one; whichever is present shows up)
+- At least one of, installed and signed in (whichever is present shows up):
+  - **Claude Code** (the CLI) — preferred, or the **Claude desktop app**
+  - **OpenAI Codex**
 
 ## Install
 
@@ -48,19 +49,23 @@ loads two per-user LaunchAgents (auto-start at login, keep-alive):
 - `com.claude-usage.server` — the poller + dashboard server
 - `com.claude-usage.menubar` — the menu-bar app
 
-On first launch macOS prompts for the **`Claude Safe Storage`** Keychain item —
-click **Always Allow** (after that it's silent). Then click the `x%Xh` item in
-your menu bar, or open **http://127.0.0.1:8787**.
+On first launch macOS prompts for a Keychain item (**`Claude Code-credentials`**
+if you use the CLI, or **`Claude Safe Storage`** for the desktop app) — click
+**Always Allow** (after that it's silent). Then click the `x%Xh` item in your
+menu bar, or open **http://127.0.0.1:8787**.
 
 ## Security — what it accesses, and what stays local
 
 Everything runs on your machine; **nothing is sent anywhere except the official
-Claude/OpenAI APIs** the desktop apps already talk to. The server binds
-`127.0.0.1` only.
+Claude/OpenAI APIs** the apps already talk to. The server binds `127.0.0.1` only.
 
-- **Claude:** reads the desktop app's `Claude Safe Storage` key from your
-  Keychain (once, at startup), decrypts the app's `claude.ai` cookies locally,
-  and calls `GET https://claude.ai/api/organizations/{org}/usage`.
+- **Claude (preferred, CLI):** reads Claude Code's OAuth token from the
+  `Claude Code-credentials` Keychain item (or `~/.claude/.credentials.json`) and
+  calls `GET https://api.anthropic.com/api/oauth/usage` with it. No cookies, no
+  org id, no desktop app needed.
+- **Claude (fallback, desktop app):** if the CLI isn't set up, reads the
+  `Claude Safe Storage` key from your Keychain, decrypts the app's `claude.ai`
+  cookies locally, and calls `GET https://claude.ai/api/organizations/{org}/usage`.
 - **Codex:** reads the Bearer token from `~/.codex/auth.json` and calls
   `GET https://chatgpt.com/backend-api/codex/usage` (quota-free), falling back
   to the on-disk session rollout logs if the token is stale.
@@ -97,8 +102,9 @@ Run in the foreground for development:
 ## Config
 
 - **Port:** `CLAUDE_USAGE_PORT` (default 8787). Binds `127.0.0.1` only.
-- **Claude org:** auto-detected from the desktop app; override with
-  `CLAUDE_USAGE_ORG`.
+- **Claude source:** the CLI OAuth token is used if present, else the desktop
+  app. The CLI path needs no org id; the desktop path auto-detects it (override
+  with `CLAUDE_USAGE_ORG`).
 - **Poll interval:** change it in the dashboard (10–3600 s); stored in SQLite.
 - **Spike window / chart range / poll interval** are all adjustable in the UI
   and persist.
