@@ -542,8 +542,10 @@ function renderCC(cc) {
 }
 
 // ---- self-update banner ----
+let lastUpdate = null;
 function renderUpdate(info) {
   if (!info) return;
+  lastUpdate = info;
   const v = $("version");
   if (v) v.textContent = info.current ? "v" + info.current : "";
   const bar = $("updateBar");
@@ -558,9 +560,23 @@ function renderUpdate(info) {
 
 function wireUpdate() {
   $("updateBtn").addEventListener("click", async () => {
-    $("updateBtn").disabled = true;
-    $("updateMsg").textContent = "Updating… the app will restart in a moment.";
-    try { await fetch("/api/update", { method: "POST" }); } catch (e) { /* server restarts */ }
+    const btn = $("updateBtn"), msg = $("updateMsg");
+    btn.disabled = true;
+    msg.textContent = "Updating… the app will restart in a moment.";
+    try {
+      const r = await fetch("/api/update", { method: "POST" });
+      if (!r.ok) {
+        // Nothing to apply (e.g. 400) — don't leave the label stuck.
+        const body = await r.json().catch(() => ({}));
+        msg.textContent = "Update didn't start: " + (body.error || ("HTTP " + r.status));
+        btn.disabled = false;
+        setTimeout(() => renderUpdate(lastUpdate), 3000);   // restore true state
+      }
+      // On success the server restarts; the WS reconnects and renderUpdate()
+      // clears this banner once versions match.
+    } catch (e) {
+      // Connection dropped — expected while the server restarts to apply.
+    }
   });
 }
 
