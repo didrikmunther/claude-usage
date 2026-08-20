@@ -111,6 +111,17 @@ class Hub:
     def poll_now(self):
         self._wake.set()
 
+    async def check_update(self) -> dict:
+        """Run the release check immediately (used by the 'Check for updates'
+        button), store + broadcast the result, and reset the periodic timer."""
+        loop = asyncio.get_running_loop()
+        info = await asyncio.wait_for(
+            loop.run_in_executor(self._pool, updater.check), timeout=FETCH_TIMEOUT)
+        self.update_info = info
+        self._update_next = time.time() + UPDATE_CHECK_INTERVAL
+        await self.broadcast({"type": "update", "update": info})
+        return info
+
     async def loop(self):
         while True:
             await self._poll_once()
@@ -249,6 +260,14 @@ async def api_update():
     try:
         updater.spawn_apply(tag)                    # detached; restarts us shortly
         return JSONResponse({"ok": True, "applying": tag})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.post("/api/check-update")
+async def api_check_update():
+    try:
+        return JSONResponse({"ok": True, "update": await hub.check_update()})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 

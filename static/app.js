@@ -558,6 +558,26 @@ function renderUpdate(info) {
   }
 }
 
+function wireCheckUpdate() {
+  const btn = $("checkUpdate");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    try {
+      const r = await fetch("/api/check-update", { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      if (body.update) renderUpdate(body.update);         // shows banner if newer
+      const uptodate = !body.update || !body.update.update_available;
+      btn.textContent = uptodate ? "Up to date ✓" : orig;
+    } catch (e) {
+      btn.textContent = "Check failed";
+    }
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
+  });
+}
+
 function wireUpdate() {
   $("updateBtn").addEventListener("click", async () => {
     const btn = $("updateBtn"), msg = $("updateMsg");
@@ -649,6 +669,7 @@ window.addEventListener("load", () => {
   wireRange();
   wireSpikeWin();
   wireUpdate();
+  wireCheckUpdate();
   connect();
   setInterval(tick, 1000);
 });
