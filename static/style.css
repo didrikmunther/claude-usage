@@ -149,5 +149,17 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
 .btn:hover { border-color: var(--fh); color: var(--fh); }
 .upd { margin-left: auto; font-size: 12px; }
 
+/* API-equivalent spend strip (full width) */
+.ccost { padding: 18px 20px; margin-bottom: 24px; }
+.cc-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.cc-title { font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+.cc-sub { font-size: 11px; }
+.cc-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.cc-metric { text-align: center; }
+.cc-metric .k { font-size: 12px; color: var(--muted); }
+.cc-metric .v { font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.cc-break { margin-top: 14px; font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; }
+.cc-break b { color: var(--ink); font-weight: 600; }
+
 /* uPlot light-theme tweaks */
 .u-axis { color: var(--muted); }

@@ -517,6 +517,30 @@ function setIntervalUI(n) {
 
 // ---- websocket ----
 let ws = null, backoff = 500;
+// ---- API-equivalent spend (Claude Code token logs priced at list rates) ----
+function fmtMoney(n) {
+  if (n == null) return "–";
+  if (n >= 1000) return "$" + Math.round(n).toLocaleString();
+  if (n >= 100) return "$" + n.toFixed(0);
+  return "$" + n.toFixed(2);
+}
+function modelShort(m) {
+  return String(m || "")
+    .replace(/^claude-/, "")
+    .replace(/-\d{6,}$/, "");   // drop trailing date stamps, keep version like 4-8
+}
+function renderCC(cc) {
+  if (!cc) return;
+  $("ccost").hidden = false;
+  $("ccD1").textContent = fmtMoney(cc.d1);
+  $("ccD7").textContent = fmtMoney(cc.d7);
+  $("ccTotal").textContent = fmtMoney(cc.total);
+  const models = (cc.by_model || []).filter((x) => x.cost >= 0.005);
+  $("ccBreak").innerHTML = models.length
+    ? "by model · " + models.map((x) => `${modelShort(x.model)} <b>${fmtMoney(x.cost)}</b>`).join(" · ")
+    : "";
+}
+
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   sendInterval = (v) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ set_interval: v }));
@@ -533,12 +557,15 @@ function connect() {
       loadHistory(m.history || []);
       if (m.claude) renderClaude(m.claude);
       if (m.codex) renderCodex(m.codex);
+      if (m.cc) renderCC(m.cc);
       setIntervalUI(m.interval);
       setStatus(m.status);
     } else if (m.type === "sample") {
       if (m.claude) { pushPoint(C, m.claude.ts / 1000, m.claude.fh, m.claude.sd); renderClaude(m.claude); }
       if (m.codex) { pushPoint(X, m.codex.ts / 1000, m.codex.cp, m.codex.cs); renderCodex(m.codex); }
       setStatus(m.status);
+    } else if (m.type === "cc") {
+      renderCC(m.cc);
     } else if (m.type === "status") {
       setStatus(m.status);
     } else if (m.type === "interval") {

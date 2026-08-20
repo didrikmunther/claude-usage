@@ -110,6 +110,19 @@
       </section>
     </div>
 
+    <section class="card ccost" id="ccost" hidden>
+      <div class="cc-head">
+        <span class="cc-title">API-equivalent spend</span>
+        <span class="muted cc-sub">Claude Code token logs priced at API list rates · comparison only</span>
+      </div>
+      <div class="cc-nums">
+        <div class="cc-metric"><div class="k">Last 24h</div><div id="ccD1" class="v">–</div></div>
+        <div class="cc-metric"><div class="k">Last 7 days</div><div id="ccD7" class="v">–</div></div>
+        <div class="cc-metric"><div class="k">All time</div><div id="ccTotal" class="v">–</div></div>
+      </div>
+      <div id="ccBreak" class="cc-break muted"></div>
+    </section>
+
     <footer class="controls card">
       <label for="ival">Poll every</label>
       <input id="ival" type="range" min="10" max="600" step="5" value="60" />

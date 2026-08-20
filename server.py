@@ -15,6 +15,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import ccost
 import codex_poller
 import poller
 from storage import Store, MIN_INTERVAL, MAX_INTERVAL
@@ -40,6 +41,8 @@ class Hub:
         self.latest: dict | None = None
         self.codex_latest: dict | None = None
         self.codex_available: bool = False
+        self.cc_latest: dict | None = None
+        self.cc_available: bool = False
         self.status: dict = {"state": "starting", "message": None, "ts": None}
         self.clients: set[WebSocket] = set()
         self._wake = asyncio.Event()
@@ -53,6 +56,7 @@ class Hub:
         self.key = poller.get_keychain_key()   # prompts for Keychain at startup
         self.org = poller.detect_org()
         self.codex_available = codex_poller.available()
+        self.cc_available = ccost.available()
         self.store = Store(DB_PATH)
         self.interval = self.store.get_interval()
 
@@ -136,6 +140,16 @@ class Hub:
                            "ts": poller.now_ms()}
             await self.broadcast({"type": "status", "status": self.status})
 
+        if self.cc_available:
+            try:
+                cc = await asyncio.wait_for(
+                    loop.run_in_executor(self._pool, ccost.refresh),
+                    timeout=FETCH_TIMEOUT)
+                self.cc_latest = cc
+                await self.broadcast({"type": "cc", "cc": cc})
+            except Exception:
+                pass
+
 
 hub = Hub()
 
@@ -156,6 +170,7 @@ async def api_latest():
     return JSONResponse({"latest": hub.latest, "claude": hub.latest,
                          "codex": hub.codex_latest,
                          "codex_available": hub.codex_available,
+                         "cc": hub.cc_latest, "cc_available": hub.cc_available,
                          "status": hub.status, "interval": hub.interval})
 
 
@@ -174,6 +189,8 @@ async def ws(sock: WebSocket):
         "claude": hub.latest,
         "codex": hub.codex_latest,
         "codex_available": hub.codex_available,
+        "cc": hub.cc_latest,
+        "cc_available": hub.cc_available,
         "status": hub.status,
         "interval": hub.interval,
         "limits": {"min": MIN_INTERVAL, "max": MAX_INTERVAL},
