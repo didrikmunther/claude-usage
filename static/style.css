@@ -16,6 +16,10 @@
 }
 
 * { box-sizing: border-box; }
+/* The `hidden` attribute must win over any class that sets `display` (e.g.
+   .updatebar { display:flex }), otherwise author styles override the UA
+   [hidden]{display:none} rule and the element shows even when hidden. */
+[hidden] { display: none !important; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); }
 body {
   font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
