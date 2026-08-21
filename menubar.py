@@ -81,6 +81,12 @@ def render_menubar_image(lines):
 
     img = NSImage.alloc().initWithSize_(NSMakeSize(width, HEIGHT))
     img.lockFocus()
+    # Subtle rounded backdrop so the content stays legible on any wallpaper.
+    # textBackgroundColor is appearance-adaptive (near-white in light, near-black
+    # in dark), so a low-opacity fill lifts contrast either way.
+    NSColor.textBackgroundColor().colorWithAlphaComponent_(0.4).set()
+    NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+        NSMakeRect(0.0, 1.0, width, HEIGHT - 2.0), 4.0, 4.0).fill()
     for i, ((kind, _text, frac), s) in enumerate(zip(lines, strs)):
         row_y = HEIGHT - row_h * (i + 1)           # first line on top
         cx = LPAD + ICON / 2

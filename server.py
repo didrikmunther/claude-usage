@@ -59,21 +59,27 @@ def burn_rate(samples: list[dict], key: str, lookback_ms: int = 300_000) -> floa
     return max(0.0, (n * sxy - sx * sy) / den * 3600.0)   # %/sec → %/hour
 
 
+PACE_ACTIVE = 0.1   # ≥10% of a window's sustainable rate counts as "actively burning"
+
+
 def binding_burn(samples: list[dict], windows: list[tuple]) -> tuple[float, float]:
-    """The window a platform is burning fastest RELATIVE to its length (the
-    binding limit). Returns (rate %/h, dial fraction 0..1) where the dial fills at
-    3× the window's sustainable rate (100% / hours). Keeps the fast 5-hour and
-    slow 7-day windows comparable on one gauge."""
-    best_rate, best_frac, best_pace = 0.0, 0.0, -1.0
+    """Which window the gauge shows: the SHORTEST actively-burning window (an
+    active 5-hour beats a slow 7-day trend), else the highest-pace one. Returns
+    (rate %/h, dial fraction 0..1); the dial fills at 3× the window's sustainable
+    rate (100% / hours), keeping fast 5-hour and slow 7-day windows readable.
+    `windows` must be shortest-first."""
+    fb = (0.0, 0.0, -1.0)                                   # (rate, frac, pace)
     for key, hours in windows:
         # Measure over 1/60th of the window (5h→5min, 7d→2.8h) so a coarse,
         # slow-stepping % (like the 7-day meter) still yields a real slope.
         rate = burn_rate(samples, key, lookback_ms=int(hours * 60 * 1000))
         pace = rate * hours / 100.0                        # 1 = exhaust-at-reset
-        if pace > best_pace:
-            best_pace, best_rate = pace, rate
-            best_frac = min(1.0, rate / (300.0 / hours))
-    return best_rate, best_frac
+        frac = min(1.0, rate / (300.0 / hours))
+        if pace >= PACE_ACTIVE:
+            return rate, frac
+        if pace > fb[2]:
+            fb = (rate, frac, pace)
+    return fb[0], fb[1]
 
 
 class Hub:
@@ -157,8 +163,9 @@ class Hub:
         if not self.store:
             return {"claude_rate": 0.0, "codex_rate": 0.0, "claude_frac": 0.0, "codex_frac": 0.0}
         hist = self.store.history(since_ms=poller.now_ms() - 4 * 3600 * 1000)  # ≥ longest lookback
-        cr, cf = binding_burn(hist, [("fh", 5), ("sd", 168)])
-        xr, xf = binding_burn(hist, [("cp", 5), ("cs", 168)])
+        cr = burn_rate(hist, "fh", lookback_ms=5 * 60 * 1000)     # Claude: 5-hour on a 0–100 dial
+        cf = min(1.0, cr / 100.0)                                 # needle pegs at 100 %/h
+        xr, xf = binding_burn(hist, [("cp", 5), ("cs", 168)])     # Codex: 5-hour then 7-day
         return {"claude_rate": round(cr, 1), "codex_rate": round(xr, 1),
                 "claude_frac": round(cf, 3), "codex_frac": round(xf, 3)}
 

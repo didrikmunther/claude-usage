@@ -652,9 +652,10 @@ function connect() {
 const GAUGE_MAX = 60;   // %/h full-scale
 let claudeGauge = null, codexGauge = null, revvedOnce = false;
 
-function makeGauge(elId) {
+function makeGauge(elId, zoneStops) {
   const el = $(elId);
   if (!el) return { update() {} };
+  const zs = zoneStops || [1 / 3, 2 / 3];        // green|amber and amber|red, as dial fractions
   const cx = 75, cy = 72, R = 56, rz = R - 4;
   const ang = (v) => 180 * (1 - Math.min(Math.max(v, 0), GAUGE_MAX) / GAUGE_MAX);  // deg
   const pol = (r, deg) => { const a = deg * Math.PI / 180; return [cx + r * Math.cos(a), cy - r * Math.sin(a)]; };
@@ -662,8 +663,9 @@ function makeGauge(elId) {
     const [x1, y1] = pol(r, ang(v1)), [x2, y2] = pol(r, ang(v2));
     return `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`;
   };
-  const zones = [[0, 20, "#22c55e"], [20, 40, "#f59e0b"], [40, 60, "#ef4444"]]
-    .map(([a, b, c]) => `<path d="${arc(rz, a, b)}" fill="none" stroke="${c}" stroke-width="6" opacity=".9"/>`).join("");
+  const G = GAUGE_MAX;
+  const zones = [[0, zs[0], "#22c55e"], [zs[0], zs[1], "#f59e0b"], [zs[1], 1, "#ef4444"]]
+    .map(([a, b, c]) => `<path d="${arc(rz, a * G, b * G)}" fill="none" stroke="${c}" stroke-width="6" opacity=".9"/>`).join("");
   let ticks = "";
   for (let v = 0; v <= GAUGE_MAX; v += 10) {
     const [x1, y1] = pol(R, ang(v)), [x2, y2] = pol(R - 7, ang(v));
@@ -675,15 +677,16 @@ function makeGauge(elId) {
     <circle cx="${cx}" cy="${cy}" r="3.5" fill="var(--ink)"/>
     <text id="${elId}-v" x="${cx}" y="93" text-anchor="middle" class="gauge-val">– %/h</text></svg>`;
   const needle = $(`${elId}-n`), val = $(`${elId}-v`);
-  // `dv` is dial-space (0..GAUGE_MAX = 0..3× the window's sustainable rate); the
-  // readout shows the true %/h, which can differ per window (5-hour vs 7-day).
-  let readoutRate = 0;
+  // `dv` is dial-space (0..GAUGE_MAX); needle pegs at the redline, but the readout
+  // shows the TRUE %/h (uncapped — it can climb past the dial's full scale).
+  let readoutRate = 0, readoutWin = "", readoutDec = 0;
   const setNeedle = (dv) => {
     const [x2, y2] = pol(R - 12, ang(dv));
     needle.setAttribute("x2", x2.toFixed(1));
     needle.setAttribute("y2", y2.toFixed(1));
-    val.textContent = `${Math.round(readoutRate)} %/h`;
-    val.style.fill = dv < 20 ? "#16a34a" : dv < 40 ? "#d97706" : "#dc2626";
+    val.textContent = `${readoutRate.toFixed(readoutDec)} %/h · ${readoutWin}`;
+    const f = dv / G;
+    val.style.fill = f < zs[0] ? "#16a34a" : f < zs[1] ? "#d97706" : "#dc2626";
   };
   // One always-on animation loop drives the needle so it never jumps: normally
   // it eases toward `target` (the live rate); during a rev it follows the
@@ -707,9 +710,11 @@ function makeGauge(elId) {
   requestAnimationFrame(loop);
   return {
     // rate = true %/h (shown); maxRate = the %/h that fills the dial (= 3× the
-    // tracked window's sustainable rate). Needle position is rate/maxRate.
-    update(rate, maxRate) {
+    // tracked window's sustainable rate); hours = that window's length (labelled).
+    update(rate, maxRate, hours) {
       readoutRate = rate || 0;
+      readoutWin = hours >= 48 ? `${Math.round(hours / 24)}d` : `${Math.round(hours)}h`;
+      readoutDec = hours >= 48 ? 2 : 0;      // slow day-scale windows need decimals
       const f = Math.min(1, Math.max(0, (rate || 0) / (maxRate || GAUGE_MAX)));
       target = f * GAUGE_MAX;
     },
@@ -720,26 +725,37 @@ function makeGauge(elId) {
 // Rev both gauges — called on page load and by the menu bar on each popover open.
 window.revGauges = () => { if (claudeGauge) claudeGauge.rev(); if (codexGauge) codexGauge.rev(); };
 
-// The window each platform is burning fastest RELATIVE to its length (the binding
-// limit), with the raw rate and the dial's full-scale (3× that window's
-// sustainable rate). Sustainable = 100% / window-hours, so redline = 300/hours %/h.
-function bindingBurn(data, now, windows) {
-  let best = { rate: 0, maxRate: 300 / windows[0].hours, pace: -1 };
+// Which window the gauge shows: the SHORTEST window that's actively burning
+// (so an active 5-hour beats a slow 7-day trend while you're coding); if none is
+// active, the one with the highest pace. Needle fills at 3× that window's
+// sustainable rate (100%/hours), so a fast 5-hour and a slow 7-day stay readable.
+const PACE_ACTIVE = 0.1;                          // ≥10% of the sustainable rate
+function bindingBurn(data, now, windows) {        // windows shortest-first
+  let fb = null;
   for (const w of windows) {
     // Lookback = 1/60th of the window (5h→5min, 7d→2.8h) so a coarse, slow meter
     // like the 7-day one still yields a real slope.
     const rate = burnRate(data[0], data[w.idx], now, w.hours * 60);
-    const pace = (rate * w.hours) / 100;            // 1 = on track to exhaust at reset
-    if (pace > best.pace) best = { rate, maxRate: 300 / w.hours, pace };
+    const pace = (rate * w.hours) / 100;          // 1 = on track to exhaust at reset
+    const cand = { rate, maxRate: 300 / w.hours, hours: w.hours, pace };
+    if (pace >= PACE_ACTIVE) return cand;         // shortest active window wins
+    if (!fb || pace > fb.pace) fb = cand;
   }
-  return best;
+  return fb;
 }
-const WINDOWS = [{ idx: 1, hours: 5 }, { idx: 2, hours: 168 }];   // 5-hour, 7-day
+// Claude: its 5-hour window on a fixed 0–100 %/h dial (needle pegs at 100, the
+// readout keeps climbing past it). Codex: window-relative across 5-hour then
+// 7-day, so its 7-day-dominated usage stays visible.
+const CLAUDE_MAX = 100;   // %/h full-scale for Claude's 5-hour dial
+const WIN_CODEX = [{ idx: 1, hours: 5 }, { idx: 2, hours: 168 }];   // shortest first
 
 function updateGauges() {
   const now = Date.now() / 1000;
-  if (claudeGauge) { const b = bindingBurn(C.data, now, WINDOWS); claudeGauge.update(b.rate, b.maxRate); }
-  if (codexGauge) { const b = bindingBurn(X.data, now, WINDOWS); codexGauge.update(b.rate, b.maxRate); }
+  if (claudeGauge) {
+    const r = burnRate(C.data[0], C.data[1], now, 5 * 60);   // 5-hour rate
+    claudeGauge.update(r, CLAUDE_MAX, 5);
+  }
+  if (codexGauge) { const b = bindingBurn(X.data, now, WIN_CODEX); codexGauge.update(b.rate, b.maxRate, b.hours); }
 }
 
 function tick() {
@@ -776,8 +792,8 @@ window.addEventListener("load", () => {
   wireSpikeWin();
   wireUpdate();
   wireCheckUpdate();
-  claudeGauge = makeGauge("claudeGauge");
-  codexGauge = makeGauge("codexGauge");
+  claudeGauge = makeGauge("claudeGauge", [0.3, 0.6]);   // 0–100 %/h dial, red from 60
+  codexGauge = makeGauge("codexGauge");                  // window-relative, red from 2× sustainable
   connect();   // rev fires from the first WS "init", once the live rate is known
   setInterval(tick, 1000);
 });
