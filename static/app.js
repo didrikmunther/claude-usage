@@ -675,12 +675,15 @@ function makeGauge(elId) {
     <circle cx="${cx}" cy="${cy}" r="3.5" fill="var(--ink)"/>
     <text id="${elId}-v" x="${cx}" y="93" text-anchor="middle" class="gauge-val">– %/h</text></svg>`;
   const needle = $(`${elId}-n`), val = $(`${elId}-v`);
-  const setNeedle = (r) => {
-    const [x2, y2] = pol(R - 12, ang(r));
+  // `dv` is dial-space (0..GAUGE_MAX = 0..3× the window's sustainable rate); the
+  // readout shows the true %/h, which can differ per window (5-hour vs 7-day).
+  let readoutRate = 0;
+  const setNeedle = (dv) => {
+    const [x2, y2] = pol(R - 12, ang(dv));
     needle.setAttribute("x2", x2.toFixed(1));
     needle.setAttribute("y2", y2.toFixed(1));
-    val.textContent = `${Math.round(r)} %/h`;
-    val.style.fill = r < 20 ? "#16a34a" : r < 40 ? "#d97706" : "#dc2626";
+    val.textContent = `${Math.round(readoutRate)} %/h`;
+    val.style.fill = dv < 20 ? "#16a34a" : dv < 40 ? "#d97706" : "#dc2626";
   };
   // One always-on animation loop drives the needle so it never jumps: normally
   // it eases toward `target` (the live rate); during a rev it follows the
@@ -703,7 +706,13 @@ function makeGauge(elId) {
   };
   requestAnimationFrame(loop);
   return {
-    update(rate) { target = rate || 0; },
+    // rate = true %/h (shown); maxRate = the %/h that fills the dial (= 3× the
+    // tracked window's sustainable rate). Needle position is rate/maxRate.
+    update(rate, maxRate) {
+      readoutRate = rate || 0;
+      const f = Math.min(1, Math.max(0, (rate || 0) / (maxRate || GAUGE_MAX)));
+      target = f * GAUGE_MAX;
+    },
     rev() { revActive = true; revStart = performance.now(); },
   };
 }
@@ -711,13 +720,26 @@ function makeGauge(elId) {
 // Rev both gauges — called on page load and by the menu bar on each popover open.
 window.revGauges = () => { if (claudeGauge) claudeGauge.rev(); if (codexGauge) codexGauge.rev(); };
 
+// The window each platform is burning fastest RELATIVE to its length (the binding
+// limit), with the raw rate and the dial's full-scale (3× that window's
+// sustainable rate). Sustainable = 100% / window-hours, so redline = 300/hours %/h.
+function bindingBurn(data, now, windows) {
+  let best = { rate: 0, maxRate: 300 / windows[0].hours, pace: -1 };
+  for (const w of windows) {
+    // Lookback = 1/60th of the window (5h→5min, 7d→2.8h) so a coarse, slow meter
+    // like the 7-day one still yields a real slope.
+    const rate = burnRate(data[0], data[w.idx], now, w.hours * 60);
+    const pace = (rate * w.hours) / 100;            // 1 = on track to exhaust at reset
+    if (pace > best.pace) best = { rate, maxRate: 300 / w.hours, pace };
+  }
+  return best;
+}
+const WINDOWS = [{ idx: 1, hours: 5 }, { idx: 2, hours: 168 }];   // 5-hour, 7-day
+
 function updateGauges() {
   const now = Date.now() / 1000;
-  if (claudeGauge) claudeGauge.update(burnRate(C.data[0], C.data[1], now));
-  if (codexGauge) {
-    const ci = X.data[1].some((v) => v != null) ? 1 : 2;   // primary window, else secondary
-    codexGauge.update(burnRate(X.data[0], X.data[ci], now));
-  }
+  if (claudeGauge) { const b = bindingBurn(C.data, now, WINDOWS); claudeGauge.update(b.rate, b.maxRate); }
+  if (codexGauge) { const b = bindingBurn(X.data, now, WINDOWS); codexGauge.update(b.rate, b.maxRate); }
 }
 
 function tick() {

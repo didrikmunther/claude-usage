@@ -36,16 +36,13 @@ CLAUDE_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.388, 0.400, 0.945, 1
 CODEX_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.961, 0.620, 0.043, 1.0)
 
 
-GAUGE_MAX = 60.0   # %/h full-scale, matches the web gauge
-
-
-def _draw_gauge(cx, cy, box_r, rate, color):
+def _draw_gauge(cx, cy, box_r, frac, color):
     """Mini speedometer: a faint platform-colored arc with a needle whose angle
-    encodes the burn rate (0 → left, GAUGE_MAX → right). AppKit coords are y-up."""
+    encodes the dial fraction (0 → left/idle, 1 → right/redline). AppKit is y-up."""
     px, py = cx, cy - box_r * 0.5          # pivot low in the box; arc rises above
     ra = box_r
-    v = max(0.0, min(GAUGE_MAX, rate or 0.0))
-    deg = 180.0 * (1 - v / GAUGE_MAX)      # 0%→180° (left), max→0° (right)
+    f = max(0.0, min(1.0, frac or 0.0))
+    deg = 180.0 * (1 - f)                  # 0→180° (left), 1→0° (right)
 
     arc = NSBezierPath.bezierPath()
     arc.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_(
@@ -84,11 +81,11 @@ def render_menubar_image(lines):
 
     img = NSImage.alloc().initWithSize_(NSMakeSize(width, HEIGHT))
     img.lockFocus()
-    for i, ((kind, _text, rate), s) in enumerate(zip(lines, strs)):
+    for i, ((kind, _text, frac), s) in enumerate(zip(lines, strs)):
         row_y = HEIGHT - row_h * (i + 1)           # first line on top
         cx = LPAD + ICON / 2
         cy = row_y + row_h / 2
-        _draw_gauge(cx, cy, ICON / 2, rate, CLAUDE_COLOR if kind == "claude" else CODEX_COLOR)
+        _draw_gauge(cx, cy, ICON / 2, frac, CLAUDE_COLOR if kind == "claude" else CODEX_COLOR)
         ts = s.size()
         s.drawAtPoint_(NSMakePoint(LPAD + ICON + GAP, row_y + (row_h - ts.height) / 2))
     img.unlockFocus()
@@ -176,9 +173,9 @@ class AppDelegate(NSObject):
             try:
                 with urllib.request.urlopen(f"{BASE}/api/latest", timeout=5) as r:
                     d = json.load(r)
-                rate = {"claude": d.get("claude_rate") or 0.0,
-                        "codex": d.get("codex_rate") or 0.0}
-                self._lines = [(k, t, rate.get(k, 0.0))
+                frac = {"claude": d.get("claude_frac") or 0.0,
+                        "codex": d.get("codex_frac") or 0.0}
+                self._lines = [(k, t, frac.get(k, 0.0))
                                for (k, t) in lines_for(d.get("latest"), d.get("codex"))]
             except Exception:
                 self._lines = []

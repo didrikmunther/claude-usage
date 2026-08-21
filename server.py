@@ -59,6 +59,23 @@ def burn_rate(samples: list[dict], key: str, lookback_ms: int = 300_000) -> floa
     return max(0.0, (n * sxy - sx * sy) / den * 3600.0)   # %/sec → %/hour
 
 
+def binding_burn(samples: list[dict], windows: list[tuple]) -> tuple[float, float]:
+    """The window a platform is burning fastest RELATIVE to its length (the
+    binding limit). Returns (rate %/h, dial fraction 0..1) where the dial fills at
+    3× the window's sustainable rate (100% / hours). Keeps the fast 5-hour and
+    slow 7-day windows comparable on one gauge."""
+    best_rate, best_frac, best_pace = 0.0, 0.0, -1.0
+    for key, hours in windows:
+        # Measure over 1/60th of the window (5h→5min, 7d→2.8h) so a coarse,
+        # slow-stepping % (like the 7-day meter) still yields a real slope.
+        rate = burn_rate(samples, key, lookback_ms=int(hours * 60 * 1000))
+        pace = rate * hours / 100.0                        # 1 = exhaust-at-reset
+        if pace > best_pace:
+            best_pace, best_rate = pace, rate
+            best_frac = min(1.0, rate / (300.0 / hours))
+    return best_rate, best_frac
+
+
 class Hub:
     """Shared state + the poll loop."""
 
@@ -135,13 +152,15 @@ class Hub:
         self._wake.set()
 
     def rates(self) -> dict:
-        """Current 5-min burn rate (%/h) per platform, for the menu-bar gauge."""
+        """Per-platform burn rate (%/h) + dial fraction for the menu-bar gauge,
+        each scaled to the window that platform is burning fastest relative to."""
         if not self.store:
-            return {"claude_rate": 0.0, "codex_rate": 0.0}
-        hist = self.store.history(since_ms=poller.now_ms() - 360_000)
-        ckey = "cp" if any(s.get("cp") is not None for s in hist) else "cs"
-        return {"claude_rate": round(burn_rate(hist, "fh"), 1),
-                "codex_rate": round(burn_rate(hist, ckey), 1)}
+            return {"claude_rate": 0.0, "codex_rate": 0.0, "claude_frac": 0.0, "codex_frac": 0.0}
+        hist = self.store.history(since_ms=poller.now_ms() - 4 * 3600 * 1000)  # ≥ longest lookback
+        cr, cf = binding_burn(hist, [("fh", 5), ("sd", 168)])
+        xr, xf = binding_burn(hist, [("cp", 5), ("cs", 168)])
+        return {"claude_rate": round(cr, 1), "codex_rate": round(xr, 1),
+                "claude_frac": round(cf, 3), "codex_frac": round(xf, 3)}
 
     async def check_update(self) -> dict:
         """Run the release check immediately (used by the 'Check for updates'

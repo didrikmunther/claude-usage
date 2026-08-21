@@ -168,11 +168,19 @@ def normalize(raw: dict, ts: int) -> tuple[dict, dict]:
     except (TypeError, ValueError):
         bal = None
 
-    # Map into fixed buckets by window length (like Claude's fh/sd) so the 5-hour
-    # and 7-day series stay in stable slots regardless of Codex's primary/secondary.
-    by_label = {w["label"]: w["used_percent"] for w in wins}
-    cp = by_label.get("5-hour")
-    cs = by_label.get("7-day")
+    # Map into fixed buckets by window LENGTH (like Claude's fh/sd) so the 5-hour
+    # and 7-day series stay in stable slots regardless of Codex's layout. Match by
+    # duration across ALL windows — the 5-hour window is sometimes an *additional*
+    # limit under a model-specific name (e.g. "GPT-5.3-Codex-Spark"), not a
+    # primary/secondary one, so a label lookup would miss it.
+    def _by_secs(target, tol):
+        for w in wins + additional:
+            s = w.get("window_seconds")
+            if s and abs(s - target) <= tol and w.get("used_percent") is not None:
+                return w["used_percent"]
+        return None
+    cp = _by_secs(18000, 900)      # 5-hour
+    cs = _by_secs(604800, 7200)    # 7-day
     row = {"cp": cp, "cs": cs, "cc": bal}
     live = {
         **row,
