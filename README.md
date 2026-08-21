@@ -1,6 +1,6 @@
 # claude-usage
 
-<img width="1908" height="1436" alt="CleanShot 2026-08-19 at 16 48 55@2x" src="https://github.com/user-attachments/assets/d881e582-4956-43c8-90e1-a55c8aef6260" />
+<img alt="claude-usage dashboard — live Claude and Codex usage, burn-rate gauges, forecasts" src="assets/dashboard.png" />
 
 ## 🤖 Give this to your agent
 
