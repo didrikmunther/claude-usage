@@ -43,9 +43,10 @@ function makeChart(elId, series, plugins) {
     plugins: plugins || [],
     scales: { y: { range: [0, 100] } },
     axes: [
-      { grid: { show: false }, ticks: { show: false }, size: 34, values: fmtAxis },
+      { grid: { show: false }, ticks: { show: false }, size: 34, values: fmtAxis,
+        stroke: css("--muted") },
       { grid: { stroke: css("--line"), width: 1 }, ticks: { show: false },
-        size: 38, values: (u, vs) => vs.map((v) => v + "%") },
+        size: 38, values: (u, vs) => vs.map((v) => v + "%"), stroke: css("--muted") },
     ],
     series: [{}, ...series.map((s) => ({ label: s.label, stroke: css(s.color), width: 2, points: { show: false } }))],
   };

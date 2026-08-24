@@ -192,5 +192,8 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
 .cc-break { margin-top: 14px; font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; }
 .cc-break b { color: var(--ink); font-weight: 600; }
 
-/* uPlot light-theme tweaks */
+/* uPlot theming */
 .u-axis { color: var(--muted); }
+/* drag-to-zoom selection box — the default tint is invisible on dark */
+.u-select { background: rgba(99, 102, 241, .20); }
+@media (prefers-color-scheme: dark) { .u-select { background: rgba(129, 140, 248, .26); } }
