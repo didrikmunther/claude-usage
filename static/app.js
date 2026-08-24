@@ -106,9 +106,15 @@ function spikeMarkers(pref, accents) {
     hooks: {
       draw: (u) => {
         ensure(u);
-        const si = pref.find((idx) => (u.data[idx] || []).some((v) => v != null));
-        const picked = si ? top3Spikes(u.data[0], u.data[si], spikeWin) : [];
-        const color = si ? css(accents[si]) : css("--fh");
+        // Measure whichever preferred series actually moves the most — Codex's
+        // 5-hour window can sit flat at 0 while the 7-day is the one with spikes.
+        let picked = [], color = css("--fh"), best = -1;
+        for (const idx of pref) {
+          if (!(u.data[idx] || []).some((v) => v != null)) continue;
+          const sp = top3Spikes(u.data[0], u.data[idx], spikeWin);
+          const score = sp.reduce((s, p) => s + p.rate, 0);
+          if (score > best) { best = score; picked = sp; color = css(accents[idx]); }
+        }
         for (let r = 0; r < 3; r++) {
           const el = els[r], p = picked[r];
           if (!p) { el.style.display = "none"; continue; }
