@@ -69,6 +69,9 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
 }
 .upd-btn:hover { filter: brightness(1.06); }
 .upd-btn:disabled { opacity: .6; cursor: default; }
+/* footer "Check for updates" turns into a primary "Update to vX" button */
+.btn.update-mode { background: var(--fh); border-color: var(--fh); color: #fff; font-weight: 600; }
+.btn.update-mode:hover { filter: brightness(1.06); color: #fff; }
 .ver { margin-left: 10px; font-variant-numeric: tabular-nums; }
 @media (prefers-color-scheme: dark) {
   .updatebar { background: #1e1b4b; color: #c7d2fe; border-color: #3730a3; }

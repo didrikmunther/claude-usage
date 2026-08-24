@@ -559,6 +559,17 @@ function renderCC(cc) {
 
 // ---- self-update banner ----
 let lastUpdate = null;
+function updateReady() {
+  return !!(lastUpdate && lastUpdate.update_available && lastUpdate.latest);
+}
+// The footer button doubles as the updater: "Check for updates" normally, but
+// "Update to vX" once one is found (so you can apply it here, not just the top).
+function setCheckBtnLabel() {
+  const btn = $("checkUpdate");
+  if (!btn || btn.dataset.busy === "1") return;
+  btn.textContent = updateReady() ? `Update to ${lastUpdate.latest}` : "Check for updates";
+  btn.classList.toggle("update-mode", updateReady());
+}
 function renderUpdate(info) {
   if (!info) return;
   lastUpdate = info;
@@ -572,25 +583,36 @@ function renderUpdate(info) {
   } else {
     bar.hidden = true;
   }
+  setCheckBtnLabel();
 }
 
 function wireCheckUpdate() {
   const btn = $("checkUpdate");
   if (!btn) return;
   btn.addEventListener("click", async () => {
-    const orig = btn.textContent;
-    btn.disabled = true;
+    if (updateReady()) {                                  // apply the update
+      btn.dataset.busy = "1"; btn.disabled = true;
+      btn.textContent = "Updating…";
+      try { await fetch("/api/update", { method: "POST" }); } catch (e) { /* server restarts */ }
+      return;                                             // WS reconnect + renderUpdate reset it
+    }
+    btn.dataset.busy = "1"; btn.disabled = true;          // check for one
     btn.textContent = "Checking…";
     try {
       const r = await fetch("/api/check-update", { method: "POST" });
       const body = await r.json().catch(() => ({}));
-      if (body.update) renderUpdate(body.update);         // shows banner if newer
-      const uptodate = !body.update || !body.update.update_available;
-      btn.textContent = uptodate ? "Up to date ✓" : orig;
+      if (body.update) renderUpdate(body.update);         // may flip us into update mode + show banner
+      if (!updateReady()) {
+        btn.textContent = "Up to date ✓";
+        setTimeout(() => { btn.dataset.busy = "0"; btn.disabled = false; setCheckBtnLabel(); }, 2000);
+        return;
+      }
     } catch (e) {
       btn.textContent = "Check failed";
+      setTimeout(() => { btn.dataset.busy = "0"; btn.disabled = false; setCheckBtnLabel(); }, 2000);
+      return;
     }
-    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
+    btn.dataset.busy = "0"; btn.disabled = false; setCheckBtnLabel();
   });
 }
 
