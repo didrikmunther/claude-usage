@@ -11,6 +11,7 @@ import json
 import math
 import os
 import threading
+import time
 import urllib.request
 
 from AppKit import (
@@ -30,6 +31,10 @@ PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "8787"))
 BASE = f"http://127.0.0.1:{PORT}"
 REFRESH_SEC = 30
 POPW, POPH, HEADER_H = 960, 680, 36
+REV_DUR = 0.9          # menu-bar gauge ignition sweep (seconds)
+ANIM_STEP = 0.03       # animation frame interval
+RISE_EPS = 0.03        # min needle increase (of full dial) to trigger a rev
+GAUGES = ("claude", "codex")
 
 # Brand-ish accents, matching the dashboard (Claude indigo, Codex amber).
 CLAUDE_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.388, 0.400, 0.945, 1.0)
@@ -61,34 +66,37 @@ def _draw_gauge(cx, cy, box_r, frac, color):
     needle.stroke()
 
 
-def render_menubar_image(lines):
-    """Build the status-item image: one row per source (mini burn-rate gauge +
-    text). One line when a single source has data, two stacked smaller lines when
-    both do. `lines` are (kind, text, rate). Returns None when nothing to show."""
+def render_menubar_image(lines, height):
+    """Build the status-item image (`height` = menu-bar thickness): one row per
+    source (mini burn-rate gauge + text). One line when a single source has data,
+    two stacked smaller lines when both do. `lines` are (kind, text, frac).
+    Returns None when nothing to show."""
     if not lines:
         return None
     two = len(lines) >= 2
-    font = NSFont.monospacedDigitSystemFontOfSize_weight_(9.5 if two else 12.5, 0.0)
+    VPAD = 2.5                                  # padding inside the box (top/bottom)
+    GAP, LPAD, RPAD = 3.0, 4.0, 5.0
+    inner_h = height - 2 * VPAD
+    row_h = inner_h / 2 if two else inner_h
+    font = NSFont.monospacedDigitSystemFontOfSize_weight_(min(9.5 if two else 12.5, row_h * 0.95), 0.0)
     text_color = NSColor.labelColor()
-    ICON = 11.0 if two else 14.0           # a gauge needs a touch more width than a dot
-    GAP, LPAD, RPAD, HEIGHT = 3.0, 2.0, 2.0, 22.0
-    row_h = HEIGHT / 2 if two else HEIGHT
+    ICON = min(11.0 if two else 14.0, row_h * 0.92)
 
     attrs = {NSFontAttributeName: font, NSForegroundColorAttributeName: text_color}
     strs = [NSAttributedString.alloc().initWithString_attributes_(t, attrs) for _, t, _ in lines]
     text_w = max((s.size().width for s in strs), default=0.0)
     width = math.ceil(LPAD + ICON + GAP + text_w + RPAD)
 
-    img = NSImage.alloc().initWithSize_(NSMakeSize(width, HEIGHT))
+    img = NSImage.alloc().initWithSize_(NSMakeSize(width, height))
     img.lockFocus()
     # Subtle rounded backdrop so the content stays legible on any wallpaper.
     # textBackgroundColor is appearance-adaptive (near-white in light, near-black
     # in dark), so a low-opacity fill lifts contrast either way.
     NSColor.textBackgroundColor().colorWithAlphaComponent_(0.4).set()
     NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-        NSMakeRect(0.0, 1.0, width, HEIGHT - 2.0), 4.0, 4.0).fill()
+        NSMakeRect(0.0, 0.0, width, height), 5.0, 5.0).fill()   # fill the item; minimal outer margin
     for i, ((kind, _text, frac), s) in enumerate(zip(lines, strs)):
-        row_y = HEIGHT - row_h * (i + 1)           # first line on top
+        row_y = (height - VPAD) - row_h * (i + 1)  # inset from the box top/bottom
         cx = LPAD + ICON / 2
         cy = row_y + row_h / 2
         _draw_gauge(cx, cy, ICON / 2, frac, CLAUDE_COLOR if kind == "claude" else CODEX_COLOR)
@@ -102,13 +110,20 @@ def render_menubar_image(lines):
 class AppDelegate(NSObject):
     def applicationDidFinishLaunching_(self, _notification):
         # --- status item + title ---
-        self.statusItem = NSStatusBar.systemStatusBar().statusItemWithLength_(
-            NSVariableStatusItemLength)
+        bar = NSStatusBar.systemStatusBar()
+        self._bar_h = bar.thickness()          # full menu-bar height, for internal padding
+        self.statusItem = bar.statusItemWithLength_(NSVariableStatusItemLength)
         btn = self.statusItem.button()
         btn.setTitle_("…")
         btn.setTarget_(self)
         btn.setAction_("togglePopover:")
-        self._lines = []
+        # gauge animation state: displayed needle vs polled target, per gauge
+        self._rows = []                                    # [(kind, text)] from the last poll
+        self._new_frac = {}                                # fresh fracs from the bg fetch
+        self._target = {k: None for k in GAUGES}           # last polled needle position
+        self._disp = {k: 0.0 for k in GAUGES}              # currently drawn needle position
+        self._rev = {k: None for k in GAUGES}              # rev start time, or None
+        self._anim_timer = None
 
         # --- popover content: header row above a webview ---
         container = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, POPW, POPH))
@@ -173,25 +188,66 @@ class AppDelegate(NSObject):
     def quit_(self, _sender):
         NSApp.terminate_(None)
 
-    # --- title updating (fetch off the main thread, draw on it) ---
+    # --- polling (fetch off the main thread) → diff + draw on it ---
     def refresh_(self, _timer):
         def work():
             try:
                 with urllib.request.urlopen(f"{BASE}/api/latest", timeout=5) as r:
                     d = json.load(r)
-                frac = {"claude": d.get("claude_frac") or 0.0,
-                        "codex": d.get("codex_frac") or 0.0}
-                self._lines = [(k, t, frac.get(k, 0.0))
-                               for (k, t) in lines_for(d.get("latest"), d.get("codex"))]
+                self._new_frac = {"claude": d.get("claude_frac") or 0.0,
+                                  "codex": d.get("codex_frac") or 0.0}
+                self._rows = list(lines_for(d.get("latest"), d.get("codex")))
             except Exception:
-                self._lines = []
+                self._new_frac, self._rows = {}, []
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "renderLines:", None, False)
+                "applyPoll:", None, False)
         threading.Thread(target=work, daemon=True).start()
 
-    def renderLines_(self, _):
+    def applyPoll_(self, _):
+        """Adopt the new fracs; rev any gauge whose needle rose since last poll."""
+        now = time.time()
+        for k in GAUGES:
+            nt = float(self._new_frac.get(k, 0.0))
+            prev = self._target[k]
+            self._target[k] = nt
+            if prev is not None and nt > prev + RISE_EPS:
+                self._rev[k] = now                         # rising → ignition sweep
+            elif self._rev[k] is None:
+                self._disp[k] = nt                         # not reving → settle now
+        if any(self._rev[k] is not None for k in GAUGES):
+            if self._anim_timer is None:
+                self._anim_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                    ANIM_STEP, self, "animTick:", None, True)
+        self._redraw()
+
+    def animTick_(self, _timer):
+        now, reving = time.time(), False
+        for k in GAUGES:
+            t0 = self._rev[k]
+            tgt = self._target[k] or 0.0
+            if t0 is None:
+                self._disp[k] = tgt
+                continue
+            t = (now - t0) / REV_DUR
+            if t >= 1.0:
+                self._rev[k] = None
+                self._disp[k] = tgt
+            else:
+                reving = True
+                if t < 0.5:
+                    x = t / 0.5
+                    self._disp[k] = 1.0 - (1.0 - x) ** 2                # 0 → 1 (redline)
+                else:
+                    x = (t - 0.5) / 0.5
+                    self._disp[k] = 1.0 + (tgt - 1.0) * (1.0 - (1.0 - x) ** 2)  # 1 → target
+        self._redraw()
+        if not reving and self._anim_timer is not None:
+            self._anim_timer.invalidate()
+            self._anim_timer = None
+
+    def _redraw(self):
         btn = self.statusItem.button()
-        img = render_menubar_image(self._lines)
+        img = render_menubar_image([(k, t, self._disp.get(k, 0.0)) for (k, t) in self._rows], self._bar_h)
         if img is None:
             btn.setImage_(None)
             btn.setTitle_("—")
