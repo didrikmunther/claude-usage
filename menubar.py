@@ -131,6 +131,8 @@ class AppDelegate(NSObject):
         conf = WKWebViewConfiguration.alloc().init()
         self.web = WKWebView.alloc().initWithFrame_configuration_(
             NSMakeRect(0, 0, POPW, POPH - HEADER_H), conf)
+        self.web.setNavigationDelegate_(self)      # retry if the server isn't up yet
+        self._loaded = False
         container.addSubview_(self.web)
 
         header = NSView.alloc().initWithFrame_(
@@ -158,8 +160,7 @@ class AppDelegate(NSObject):
         self.popover.setContentSize_((POPW, POPH))
         self.popover.setBehavior_(NSPopoverBehaviorTransient)
         self.popover.setContentViewController_(vc)
-        self.web.loadRequest_(
-            NSURLRequest.requestWithURL_(NSURL.URLWithString_(f"{BASE}/?widget=1")))
+        self._loadDashboard()
 
         # --- title refresh loop ---
         self.refresh_(None)
@@ -175,9 +176,35 @@ class AppDelegate(NSObject):
             self.popover.showRelativeToRect_ofView_preferredEdge_(
                 btn.bounds(), btn, NSMinYEdge)
             NSApp.activateIgnoringOtherApps_(True)
-            # Rev the gauges on every open (the webview stays loaded between opens).
-            self.web.evaluateJavaScript_completionHandler_(
-                "window.revGauges && window.revGauges()", None)
+            if not self._loaded:                   # never loaded (server was down at launch)? load now
+                self._loadDashboard()
+            else:
+                # Rev the gauges on every open (the webview stays loaded between opens).
+                self.web.evaluateJavaScript_completionHandler_(
+                    "window.revGauges && window.revGauges()", None)
+
+    # --- webview loading (retry until the server is reachable) ---
+    def _loadDashboard(self):
+        self.web.loadRequest_(
+            NSURLRequest.requestWithURL_(NSURL.URLWithString_(f"{BASE}/?widget=1")))
+
+    def webView_didFinishNavigation_(self, web, nav):
+        self._loaded = True
+
+    def webView_didFailProvisionalNavigation_withError_(self, web, nav, err):
+        self._retryLoad()                          # server likely not listening yet
+
+    def webView_didFailNavigation_withError_(self, web, nav, err):
+        self._retryLoad()
+
+    def _retryLoad(self):
+        self._loaded = False
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            2.0, self, "reloadWeb:", None, False)
+
+    def reloadWeb_(self, _timer):
+        if not self._loaded:
+            self._loadDashboard()
 
     def reload_(self, _sender):
         self.web.reloadFromOrigin_(None)
