@@ -22,9 +22,12 @@ const winLabel = (sec) => (sec < 3600 ? `${Math.round(sec / 60)}m` : `${Math.rou
 // series = index into C.data for the recent-rate method (null → plain cycle
 // average). Only the 5-hour window uses the reactive method; weekly windows
 // average over the whole cycle.
+// Forecast order: 7-day on top (aligns with Codex's 7-day), then 5-hour, then
+// the per-model weekly windows. (The bars keep 5-hour on top — this is just the
+// forecast list.)
 const CLAUDE_WIN = [
-  { key: "fh", label: "5-hour", reset: "five_hour",        winMs: 5 * 3600e3,      series: 1 },
   { key: "sd", label: "7-day",  reset: "seven_day",        winMs: 7 * 24 * 3600e3, series: null },
+  { key: "fh", label: "5-hour", reset: "five_hour",        winMs: 5 * 3600e3,      series: 1 },
   { key: "so", label: "Opus",   reset: "seven_day_opus",   winMs: 7 * 24 * 3600e3, series: null },
   { key: "sn", label: "Sonnet", reset: "seven_day_sonnet", winMs: 7 * 24 * 3600e3, series: null },
 ];
@@ -48,7 +51,7 @@ function makeChart(elId, series, plugins) {
       { grid: { stroke: css("--line"), width: 1 }, ticks: { show: false },
         size: 38, values: (u, vs) => vs.map((v) => v + "%"), stroke: css("--muted") },
     ],
-    series: [{}, ...series.map((s) => ({ label: s.label, stroke: css(s.color), width: 2, points: { show: false } }))],
+    series: [{}, ...series.map((s) => ({ label: s.label, stroke: css(s.color), width: 2, points: { show: false }, show: s.show !== false }))],
   };
   return new uPlot(opts, [[], [], []], el);
 }
@@ -187,16 +190,18 @@ function consumedInRange(st) {
 
 function renderConsumed() {
   const targets = [
-    { st: C, el: "consumed", cols: ["--fh", "--sd"] },
-    { st: X, el: "cxConsumed", cols: ["--cx1", "--cx2"] },
+    // {i} indexes into consumedInRange's [series1, series2]. Codex omits 5-hour.
+    { st: C, el: "consumed", series: [{ i: 0, lbl: "5h", col: "--fh" }, { i: 1, lbl: "7d", col: "--sd" }] },
+    { st: X, el: "cxConsumed", series: [{ i: 1, lbl: "7d", col: "--sd" }] },
   ];
-  const LBL = ["5h", "7d"];
   for (const t of targets) {
     const el = $(t.el);
     if (!el) continue;
     const res = consumedInRange(t.st);
-    const parts = res.map((r, idx) => r.n > 1
-      ? `<b style="color:var(${t.cols[idx]})">${LBL[idx]} +${Math.round(r.sum)}%</b>` : null).filter(Boolean);
+    const parts = t.series.map((sp) => {
+      const r = res[sp.i];
+      return r && r.n > 1 ? `<b style="color:var(${sp.col})">${sp.lbl} +${Math.round(r.sum)}%</b>` : null;
+    }).filter(Boolean);
     el.innerHTML = parts.length ? `<span class="muted">used</span> ${parts.join(" · ")}` : "";
   }
 }
@@ -391,7 +396,7 @@ function renderClaudeForecast() {
 // no data leaves an invisible ghost so both columns line up row-for-row.
 const CX_SLOTS = [
   { label: "5-hour", cls: "cx1" },
-  { label: "7-day",  cls: "cx2" },
+  { label: "7-day",  cls: "sd" },   // same teal as Claude's 7-day
 ];
 const GHOST_BAR = `<div class="bar-row placeholder" aria-hidden="true"><div class="bar-label">&nbsp;<span class="reset">&nbsp;</span></div><div class="track"></div><div class="pct"></div></div>`;
 const GHOST_PROG = `<div class="prog-row placeholder" aria-hidden="true"><span class="prog-label">&nbsp;</span><span class="prog-msg">&nbsp;</span><span class="prog-rate"></span></div>`;
@@ -452,13 +457,14 @@ function renderCodexForecast() {
       ? cycleSamples(X.data, idx, new Date(w.reset_at).getTime(), winMs) : null;
     return progRow(w.label, forecast(w.used_percent, winMs, w.reset_at, samples));
   };
+  // Only real windows here (no ghost padding) — Codex's 7-day sits at the top,
+  // aligning with Claude's now-top 7-day forecast row.
   const usedW = new Set();
-  // Same slotting as the bars: 5-hour row, then 7-day row (ghost where empty).
-  const rows = CX_SLOTS.map((slot) => {
+  const rows = [];
+  for (const slot of CX_SLOTS) {
     const w = wins.find((x) => x.label === slot.label);
-    if (w) { usedW.add(w); return progFor(w); }
-    return GHOST_PROG;
-  });
+    if (w) { usedW.add(w); rows.push(progFor(w)); }
+  }
   wins.filter((w) => !usedW.has(w)).forEach((w) => rows.push(progFor(w)));
   $("cxProg").innerHTML = rows.join("") || emptyRow();
 }
@@ -785,7 +791,7 @@ function bindingBurn(data, now, windows) {        // windows shortest-first
 // readout keeps climbing past it). Codex: window-relative across 5-hour then
 // 7-day, so its 7-day-dominated usage stays visible.
 const CLAUDE_MAX = 100;   // %/h full-scale for Claude's 5-hour dial
-const WIN_CODEX = [{ idx: 1, hours: 5 }, { idx: 2, hours: 168 }];   // shortest first
+const WIN_CODEX = [{ idx: 2, hours: 168 }];   // Codex: 7-day only (no real 5-hour limit)
 
 function updateGauges() {
   const now = Date.now() / 1000;
@@ -821,8 +827,10 @@ function observeSize(elId, getChart) {
 window.addEventListener("load", () => {
   C.chart = makeChart("chart", [{ label: "5h", color: "--fh" }, { label: "7d", color: "--sd" }],
     [spikeMarkers([1], { 1: "--fh" })]);                       // mark 5-hour spikes
-  X.chart = makeChart("cxChart", [{ label: "primary", color: "--cx1" }, { label: "secondary", color: "--cx2" }],
-    [spikeMarkers([1, 2], { 1: "--cx1", 2: "--cx2" })]);       // 5-hour if present, else 7-day
+  // Codex has no real 5-hour limit (its 5-hour "Spark" window is feature-specific
+  // and usually 0), so hide that series and mark spikes on the 7-day only.
+  X.chart = makeChart("cxChart", [{ label: "primary", color: "--cx1", show: false }, { label: "secondary", color: "--sd" }],
+    [spikeMarkers([2], { 2: "--sd" })]);   // 7-day teal, matching Claude
   observeSize("chart", () => C.chart);
   observeSize("cxChart", () => X.chart);
   wireControls();
