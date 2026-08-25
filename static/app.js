@@ -545,16 +545,22 @@ function modelShort(m) {
     .replace(/^claude-/, "")
     .replace(/-\d{6,}$/, "");   // drop trailing date stamps, keep version like 4-8
 }
-function renderCC(cc) {
-  if (!cc) return;
+let ccClaude = null, ccCodex = null;
+function renderCC(cc) { if (cc) { ccClaude = cc; renderCost(); } }
+function renderXcost(xc) { if (xc) { ccCodex = xc; renderCost(); } }
+
+// Combined Claude + Codex totals, with a per-provider split underneath.
+function renderCost() {
+  if (!ccClaude && !ccCodex) return;
   $("ccost").hidden = false;
-  $("ccD1").textContent = fmtMoney(cc.d1);
-  $("ccD7").textContent = fmtMoney(cc.d7);
-  $("ccTotal").textContent = fmtMoney(cc.total);
-  const models = (cc.by_model || []).filter((x) => x.cost >= 0.005);
-  $("ccBreak").innerHTML = models.length
-    ? "by model · " + models.map((x) => `${modelShort(x.model)} <b>${fmtMoney(x.cost)}</b>`).join(" · ")
-    : "";
+  const sum = (k) => (ccClaude ? ccClaude[k] : 0) + (ccCodex ? ccCodex[k] : 0);
+  $("ccD1").textContent = fmtMoney(sum("d1"));
+  $("ccD7").textContent = fmtMoney(sum("d7"));
+  $("ccTotal").textContent = fmtMoney(sum("total"));
+  const parts = [];
+  if (ccClaude) parts.push(`Claude <b>${fmtMoney(ccClaude.total)}</b>`);
+  if (ccCodex) parts.push(`Codex <b>${fmtMoney(ccCodex.total)}</b>`);
+  $("ccBreak").innerHTML = parts.join("  ·  ") + (parts.length ? "  · all-time" : "");
 }
 
 // ---- self-update banner ----
@@ -655,6 +661,7 @@ function connect() {
       if (m.claude) renderClaude(m.claude);
       if (m.codex) renderCodex(m.codex);
       if (m.cc) renderCC(m.cc);
+      if (m.xcost) renderXcost(m.xcost);
       if (m.update) renderUpdate(m.update);
       setIntervalUI(m.interval);
       setStatus(m.status);
@@ -666,6 +673,8 @@ function connect() {
       setStatus(m.status);
     } else if (m.type === "cc") {
       renderCC(m.cc);
+    } else if (m.type === "xcost") {
+      renderXcost(m.xcost);
     } else if (m.type === "update") {
       renderUpdate(m.update);
     } else if (m.type === "status") {

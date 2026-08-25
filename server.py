@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import ccost
+import codex_cost
 import claude_cli
 import codex_poller
 import poller
@@ -96,6 +97,8 @@ class Hub:
         self.codex_available: bool = False
         self.cc_latest: dict | None = None
         self.cc_available: bool = False
+        self.xcost_latest: dict | None = None
+        self.xcost_available: bool = False
         self.status: dict = {"state": "starting", "message": None, "ts": None}
         self.clients: set[WebSocket] = set()
         self._wake = asyncio.Event()
@@ -117,6 +120,7 @@ class Hub:
         self.claude_src = self._pick_claude_source()
         self.codex_available = codex_poller.available()
         self.cc_available = ccost.available()
+        self.xcost_available = codex_cost.available()
         self.store = Store(DB_PATH)
         self.interval = self.store.get_interval()
 
@@ -273,6 +277,16 @@ class Hub:
             except Exception:
                 pass
 
+        if self.xcost_available:
+            try:
+                xc = await asyncio.wait_for(
+                    loop.run_in_executor(self._pool, codex_cost.refresh),
+                    timeout=FETCH_TIMEOUT)
+                self.xcost_latest = xc
+                await self.broadcast({"type": "xcost", "xcost": xc})
+            except Exception:
+                pass
+
         if time.time() >= self._update_next:
             self._update_next = time.time() + UPDATE_CHECK_INTERVAL
             try:
@@ -305,6 +319,7 @@ async def api_latest():
                          "codex": hub.codex_latest,
                          "codex_available": hub.codex_available,
                          "cc": hub.cc_latest, "cc_available": hub.cc_available,
+                         "xcost": hub.xcost_latest, "xcost_available": hub.xcost_available,
                          "update": hub.update_info, **hub.rates(),
                          "status": hub.status, "interval": hub.interval})
 
@@ -347,6 +362,8 @@ async def ws(sock: WebSocket):
         "codex_available": hub.codex_available,
         "cc": hub.cc_latest,
         "cc_available": hub.cc_available,
+        "xcost": hub.xcost_latest,
+        "xcost_available": hub.xcost_available,
         "update": hub.update_info,
         "status": hub.status,
         "interval": hub.interval,

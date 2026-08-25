@@ -72,6 +72,10 @@ Claude/OpenAI APIs** the apps already talk to. The server binds `127.0.0.1` only
 - **Codex:** reads the Bearer token from `~/.codex/auth.json` and calls
   `GET https://chatgpt.com/backend-api/codex/usage` (quota-free), falling back
   to the on-disk session rollout logs if the token is stale.
+- **API-equivalent spend:** reads token counts (only) from local logs —
+  `~/.claude/projects/**/*.jsonl` (Claude Code) and `~/.codex/sessions/**/rollout-*.jsonl`
+  (Codex) — and prices them at API list rates for a comparison estimate. Read
+  locally, nothing sent; conversation content is ignored.
 - History is stored in SQLite at `~/.claude-usage/usage.db`. No telemetry.
 
 The code is short and readable — audit `poller.py` / `codex_poller.py` /
