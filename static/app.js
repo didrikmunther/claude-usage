@@ -735,8 +735,8 @@ function makeGauge(elId, zoneStops) {
   // One always-on animation loop drives the needle so it never jumps: normally
   // it eases toward `target` (the live rate); during a rev it follows the
   // ignition sweep, which itself settles onto `target`.
-  const REV_DUR = 1100, SMOOTH = 0.12;
-  let target = 0, cur = 0, revActive = false, revStart = 0;
+  const REV_DUR = 1100, SMOOTH = 0.12, VIB_AMP = 4, VIB_FREQ = 0.08;
+  let target = 0, cur = 0, revActive = false, revStart = 0, over = false;
   const loop = (now) => {
     if (revActive) {
       const t = Math.min(1, (now - revStart) / REV_DUR);
@@ -748,7 +748,9 @@ function makeGauge(elId, zoneStops) {
       cur += (target - cur) * SMOOTH;                                 // exponential ease
       if (Math.abs(target - cur) < 0.03) cur = target;
     }
-    setNeedle(cur);
+    // Over the dial's max → buzz the needle against the redline (clamped at max).
+    const dv = (over && !revActive) ? cur + Math.sin(now * VIB_FREQ) * VIB_AMP : cur;
+    setNeedle(dv);
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
@@ -759,8 +761,9 @@ function makeGauge(elId, zoneStops) {
       readoutRate = rate || 0;
       readoutWin = hours >= 48 ? `${Math.round(hours / 24)}d` : `${Math.round(hours)}h`;
       readoutDec = hours >= 48 ? 2 : 0;      // slow day-scale windows need decimals
-      const f = Math.min(1, Math.max(0, (rate || 0) / (maxRate || GAUGE_MAX)));
-      target = f * GAUGE_MAX;
+      const mx = maxRate || GAUGE_MAX;
+      over = (rate || 0) > mx;               // past full-scale → vibrate
+      target = Math.min(1, Math.max(0, (rate || 0) / mx)) * GAUGE_MAX;
     },
     rev() { revActive = true; revStart = performance.now(); },
   };
