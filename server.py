@@ -30,8 +30,9 @@ DB_PATH = os.path.expanduser("~/.claude-usage/usage.db")
 HOST = os.environ.get("CLAUDE_USAGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "8787"))
 FETCH_TIMEOUT = 45      # hard cap on a single poll; guards against wake-from-sleep hangs
-CLAUDE_MIN_INTERVAL = 90  # Claude's usage endpoint is burst-limited; don't poll it
-                          # faster than this even if the UI interval is lower.
+CLAUDE_MIN_INTERVAL = 300  # The CLI's oauth/usage endpoint is tightly (hourly)
+                           # rate-limited and shared with Claude Code's own /usage
+                           # calls, so poll it gently — the % meter barely moves.
 UPDATE_CHECK_INTERVAL = 6 * 3600   # how often to look for a new release
 
 app = FastAPI(title="Claude Usage")
@@ -214,7 +215,8 @@ class Hub:
         wait = retry_after if retry_after and retry_after > 0 else min(
             900, 60 * (2 ** self._claude_streak))
         self._claude_next = time.time() + wait
-        return f"Claude: rate-limited, backing off {int(wait)}s"
+        when = f"~{round(wait / 60)} min" if wait >= 120 else f"{int(wait)}s"
+        return f"Claude usage paused {when} (rate limit)"
 
     async def _poll_once(self):
         loop = asyncio.get_running_loop()

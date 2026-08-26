@@ -22,7 +22,7 @@ from AppKit import (
     NSMinYEdge, NSImage, NSImageOnly, NSColor, NSBezierPath,
     NSFontAttributeName, NSForegroundColorAttributeName,
 )
-from Foundation import NSObject, NSURL, NSURLRequest, NSAttributedString
+from Foundation import NSObject, NSURL, NSURLRequest, NSAttributedString, NSUserDefaults
 from WebKit import WKWebView, WKWebViewConfiguration
 
 from menubar_fmt import lines_for
@@ -66,11 +66,11 @@ def _draw_gauge(cx, cy, box_r, frac, color):
     needle.stroke()
 
 
-def render_menubar_image(lines, height):
+def render_menubar_image(lines, height, zen=False):
     """Build the status-item image (`height` = menu-bar thickness): one row per
     source (mini burn-rate gauge + text). One line when a single source has data,
     two stacked smaller lines when both do. `lines` are (kind, text, frac).
-    Returns None when nothing to show."""
+    `zen` drops the backdrop + colors (monochrome template). None when nothing."""
     if not lines:
         return None
     two = len(lines) >= 2
@@ -89,12 +89,13 @@ def render_menubar_image(lines, height):
 
     img = NSImage.alloc().initWithSize_(NSMakeSize(width, height))
     img.lockFocus()
-    # Subtle rounded backdrop so the content stays legible on any wallpaper.
-    # textBackgroundColor is appearance-adaptive (near-white in light, near-black
-    # in dark), so a low-opacity fill lifts contrast either way.
-    NSColor.textBackgroundColor().colorWithAlphaComponent_(0.4).set()
-    NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-        NSMakeRect(0.0, 0.0, width, height), 5.0, 5.0).fill()   # fill the item; minimal outer margin
+    if not zen:
+        # Subtle rounded backdrop so the content stays legible on any wallpaper.
+        # textBackgroundColor is appearance-adaptive (near-white in light,
+        # near-black in dark), so a low-opacity fill lifts contrast either way.
+        NSColor.textBackgroundColor().colorWithAlphaComponent_(0.4).set()
+        NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            NSMakeRect(0.0, 0.0, width, height), 5.0, 5.0).fill()
     for i, ((kind, _text, frac), s) in enumerate(zip(lines, strs)):
         row_y = (height - VPAD) - row_h * (i + 1)  # inset from the box top/bottom
         cx = LPAD + ICON / 2
@@ -103,7 +104,9 @@ def render_menubar_image(lines, height):
         ts = s.size()
         s.drawAtPoint_(NSMakePoint(LPAD + ICON + GAP, row_y + (row_h - ts.height) / 2))
     img.unlockFocus()
-    img.setTemplate_(False)                        # keep our colors (not menu-bar tint)
+    # Zen mode: render as a template so the menu bar tints it one monochrome color
+    # (drops our brand colors); otherwise keep our colors.
+    img.setTemplate_(zen)
     return img
 
 
@@ -112,6 +115,7 @@ class AppDelegate(NSObject):
         # --- status item + title ---
         bar = NSStatusBar.systemStatusBar()
         self._bar_h = bar.thickness()          # full menu-bar height, for internal padding
+        self._zen = NSUserDefaults.standardUserDefaults().boolForKey_("zenMode")
         self.statusItem = bar.statusItemWithLength_(NSVariableStatusItemLength)
         btn = self.statusItem.button()
         btn.setTitle_("…")
@@ -150,6 +154,13 @@ class AppDelegate(NSObject):
 
         mkbtn("↻ Reload", 8, 92, "reload:")
         mkbtn("Open in browser", 104, 150, "openBrowser:")
+        zen = NSButton.checkboxWithTitle_target_action_("Zen", self, "toggleZen:")
+        zen.setFont_(NSFont.systemFontOfSize_(12))
+        zen.sizeToFit()
+        zsz = zen.frame().size
+        zen.setFrameOrigin_(NSMakePoint((POPW - zsz.width) / 2, (HEADER_H - zsz.height) / 2))
+        zen.setState_(1 if self._zen else 0)
+        header.addSubview_(zen)
         mkbtn("Quit", POPW - 70, 62, "quit:")
         container.addSubview_(header)
 
@@ -215,6 +226,11 @@ class AppDelegate(NSObject):
     def quit_(self, _sender):
         NSApp.terminate_(None)
 
+    def toggleZen_(self, sender):
+        self._zen = sender.state() != 0
+        NSUserDefaults.standardUserDefaults().setBool_forKey_(self._zen, "zenMode")
+        self._redraw()
+
     # --- polling (fetch off the main thread) → diff + draw on it ---
     def refresh_(self, _timer):
         def work():
@@ -274,7 +290,7 @@ class AppDelegate(NSObject):
 
     def _redraw(self):
         btn = self.statusItem.button()
-        img = render_menubar_image([(k, t, self._disp.get(k, 0.0)) for (k, t) in self._rows], self._bar_h)
+        img = render_menubar_image([(k, t, self._disp.get(k, 0.0)) for (k, t) in self._rows], self._bar_h, self._zen)
         if img is None:
             btn.setImage_(None)
             btn.setTitle_("—")
