@@ -716,11 +716,30 @@ function makeGauge(elId, zoneStops) {
     ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--muted)" stroke-width="1"/>`;
   }
   const [nx, ny] = pol(R - 12, ang(0));
-  el.innerHTML = `<svg viewBox="0 0 150 96" class="gauge-svg">${zones}${ticks}
+  el.innerHTML = `<svg viewBox="0 0 150 96" class="gauge-svg">
+    <defs>
+      <filter id="${elId}-blur" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="1.7"/></filter>
+      <radialGradient id="${elId}-sg"><stop offset="0%" stop-color="#9ca3af" stop-opacity=".9"/><stop offset="55%" stop-color="#9ca3af" stop-opacity=".4"/><stop offset="100%" stop-color="#9ca3af" stop-opacity="0"/></radialGradient>
+    </defs>
+    ${zones}${ticks}
     <line id="${elId}-n" x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="var(--ink)" stroke-width="2.5" stroke-linecap="round"/>
     <circle cx="${cx}" cy="${cy}" r="3.5" fill="var(--ink)"/>
+    <g id="${elId}-steam" filter="url(#${elId}-blur)"></g>
     <text id="${elId}-v" x="${cx}" y="93" text-anchor="middle" class="gauge-val">– %/h</text></svg>`;
   const needle = $(`${elId}-n`), val = $(`${elId}-v`);
+  const steamG = $(`${elId}-steam`);
+  // A rising, fading steam puff — vented while the gauge is over the max.
+  const puff = () => {
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    c.setAttribute("cx", (62 + Math.random() * 26).toFixed(1));   // a narrow column
+    c.setAttribute("cy", (30 + Math.random() * 3).toFixed(1));
+    c.setAttribute("r", (4 + Math.random() * 2.5).toFixed(1));    // big + soft
+    c.setAttribute("fill", `url(#${elId}-sg)`);
+    c.setAttribute("class", "steam-puff");
+    c.style.setProperty("--dx", (Math.random() * 12 - 6).toFixed(1) + "px");
+    c.addEventListener("animationend", () => c.remove());
+    steamG.appendChild(c);
+  };
   // `dv` is dial-space (0..GAUGE_MAX); needle pegs at the redline, but the readout
   // shows the TRUE %/h (uncapped — it can climb past the dial's full scale).
   let readoutRate = 0, readoutWin = "", readoutDec = 0;
@@ -735,9 +754,10 @@ function makeGauge(elId, zoneStops) {
   // One always-on animation loop drives the needle so it never jumps: normally
   // it eases toward `target` (the live rate); during a rev it follows the
   // ignition sweep, which itself settles onto `target`.
-  const REV_DUR = 1100, SMOOTH = 0.12, VIB_AMP = 4, VIB_FREQ = 0.08;
-  let target = 0, cur = 0, revActive = false, revStart = 0, over = false;
+  const REV_DUR = 1100, SMOOTH = 0.12, VIB_AMP = 4, VIB_FREQ = 0.08, PUFF_MS = 120;
+  let target = 0, cur = 0, revActive = false, revStart = 0, over = false, lastPuff = 0;
   const loop = (now) => {
+    if (over && !revActive && now - lastPuff > PUFF_MS) { lastPuff = now; puff(); }
     if (revActive) {
       const t = Math.min(1, (now - revStart) / REV_DUR);
       cur = t < 0.5

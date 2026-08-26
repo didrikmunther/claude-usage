@@ -84,6 +84,13 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
 .gauge-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 1px; }
 .gauge-svg { width: 100%; height: auto; display: block; }
 .gauge-val { fill: var(--ink); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* steam vented from the gauge while it's over the max */
+.steam-puff { transform-box: fill-box; transform-origin: center; animation: steam 1.9s ease-out forwards; }
+@keyframes steam {
+  0%   { opacity: 0; transform: translate(0, 0) scale(0.6); }
+  20%  { opacity: .8; }
+  100% { opacity: 0; transform: translate(var(--dx, 0), -26px) scale(2.8); }
+}
 @media (max-width: 480px) { .usage-row { flex-direction: column; align-items: stretch; } .gauge { width: 100%; max-width: 180px; margin: 0 auto; } }
 
 .bars { display: grid; gap: 18px; margin-bottom: 28px; }
