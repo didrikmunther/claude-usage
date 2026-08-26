@@ -115,7 +115,9 @@ class AppDelegate(NSObject):
         # --- status item + title ---
         bar = NSStatusBar.systemStatusBar()
         self._bar_h = bar.thickness()          # full menu-bar height, for internal padding
-        self._zen = NSUserDefaults.standardUserDefaults().boolForKey_("zenMode")
+        # Dedicated suite (own plist, not the shared org.python.python domain).
+        self._defaults = NSUserDefaults.alloc().initWithSuiteName_("com.claude-usage")
+        self._zen = self._defaults.boolForKey_("zenMode")
         self.statusItem = bar.statusItemWithLength_(NSVariableStatusItemLength)
         btn = self.statusItem.button()
         btn.setTitle_("…")
@@ -228,7 +230,8 @@ class AppDelegate(NSObject):
 
     def toggleZen_(self, sender):
         self._zen = sender.state() != 0
-        NSUserDefaults.standardUserDefaults().setBool_forKey_(self._zen, "zenMode")
+        self._defaults.setBool_forKey_(self._zen, "zenMode")
+        self._defaults.synchronize()               # flush now — survives a hard restart
         self._redraw()
 
     # --- polling (fetch off the main thread) → diff + draw on it ---
