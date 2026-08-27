@@ -201,8 +201,31 @@ class Hub:
         if self.claude_src == "cli":
             raw = claude_cli.fetch_usage()
         else:
-            raw = poller.fetch_usage(self.key, self.org)
+            try:
+                raw = poller.fetch_usage(self.key, self.org)
+            except Exception as e:
+                if "404" not in str(e):           # org not found → likely stale after
+                    raise                         # an account/org switch; recover once
+                self._recover_claude_404()
+                raw = (claude_cli.fetch_usage() if self.claude_src == "cli"
+                       else poller.fetch_usage(self.key, self.org))
         return poller.normalize(raw, ts)          # (row, live)
+
+    def _recover_claude_404(self):
+        """Desktop 404 = the org in the URL isn't accessible — almost always a
+        stale org after the user switched accounts/orgs in the app. Re-detect the
+        org; if it hasn't changed, fall back to the org-less CLI endpoint."""
+        try:
+            new_org = poller.detect_org()
+        except SystemExit:
+            new_org = None
+        if new_org and new_org != self.org:
+            print(f"[claude] org changed {self.org} → {new_org}; retrying desktop")
+            self.org = new_org
+            return
+        if claude_cli.available():
+            print("[claude] desktop 404 (org not found); switching to CLI OAuth")
+            self.claude_src = "cli"
 
     @staticmethod
     def _errmsg(who, e):
