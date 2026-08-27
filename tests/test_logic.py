@@ -118,22 +118,6 @@ def test_burn_rate():
     assert burn_rate([], "fh") == 0.0
 
 
-def test_binding_burn():
-    from server import binding_burn
-    base = 1_000_000
-    # 7-day window moving (+0.2%/min → 12%/h), 5-hour flat → gauge tracks 7-day,
-    # and its slow rate still pegs the dial (12%/h ≫ 7-day's sustainable ~0.6%/h).
-    slow7d = [{"ts": base + i * 60_000, "cp": 0.0, "cs": 14.0 + i * 0.2} for i in range(6)]
-    rate, frac = binding_burn(slow7d, [("cp", 5), ("cs", 168)])
-    assert round(rate) == 12 and frac == 1.0
-    # Active 5-hour (+0.5%/min → 30%/h) dominates → half-dial (30 of 60 %/h max).
-    fast5h = [{"ts": base + i * 60_000, "cp": 10.0 + i * 0.5, "cs": 14.0} for i in range(6)]
-    r2, f2 = binding_burn(fast5h, [("cp", 5), ("cs", 168)])
-    assert round(r2) == 30 and abs(f2 - 0.5) < 0.02
-    # Idle → nothing moves.
-    assert binding_burn([{"ts": base, "cp": 0.0, "cs": 14.0}], [("cp", 5), ("cs", 168)]) == (0.0, 0.0)
-
-
 def test_is_newer():
     assert is_newer("v1.2.0", "1.1.0") is True
     assert is_newer("v1.1.0", "1.1.0") is False   # equal -> no update

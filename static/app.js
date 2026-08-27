@@ -810,10 +810,11 @@ function bindingBurn(data, now, windows) {        // windows shortest-first
   }
   return fb;
 }
-// Claude: its 5-hour window on a fixed 0–100 %/h dial (needle pegs at 100, the
-// readout keeps climbing past it). Codex: window-relative across 5-hour then
-// 7-day, so its 7-day-dominated usage stays visible.
+// Each gauge tracks one window on a fixed dial: Claude's 5-hour at 0–100 %/h,
+// Codex's 7-day at 0–8 %/h (its rate is inherently small). Needles peg + vibrate
+// past the max; the readout keeps climbing.
 const CLAUDE_MAX = 100;   // %/h full-scale for Claude's 5-hour dial
+const CODEX_MAX = 8;      // %/h full-scale for Codex's 7-day dial
 const WIN_CODEX = [{ idx: 2, hours: 168 }];   // Codex: 7-day only (no real 5-hour limit)
 
 function updateGauges() {
@@ -822,7 +823,10 @@ function updateGauges() {
     const r = burnRate(C.data[0], C.data[1], now, 5 * 60);   // 5-hour rate
     claudeGauge.update(r, CLAUDE_MAX, 5);
   }
-  if (codexGauge) { const b = bindingBurn(X.data, now, WIN_CODEX); codexGauge.update(b.rate, b.maxRate, b.hours); }
+  if (codexGauge) {
+    const b = bindingBurn(X.data, now, WIN_CODEX);           // 7-day rate + lookback
+    codexGauge.update(b.rate, CODEX_MAX, b.hours);
+  }
 }
 
 function tick() {
