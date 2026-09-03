@@ -38,6 +38,9 @@ const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v
 // ---- charts ----
 function makeChart(elId, series, plugins) {
   const el = $(elId);
+  const real = series.map((s) => ({ label: s.label, stroke: css(s.color), width: 2, points: { show: false }, show: s.show !== false }));
+  // One projection twin per line: lighter + dashed, drawn in the future region.
+  const proj = series.map((s) => ({ label: s.label + " ·proj", stroke: css(s.color + "-dim"), width: 2, dash: [4, 4], points: { show: false }, show: s.show !== false }));
   const opts = {
     width: el.clientWidth || 640, height: 240,
     padding: [8, 8, 0, 0],
@@ -51,9 +54,35 @@ function makeChart(elId, series, plugins) {
       { grid: { stroke: css("--line"), width: 1 }, ticks: { show: false },
         size: 38, values: (u, vs) => vs.map((v) => v + "%"), stroke: css("--muted") },
     ],
-    series: [{}, ...series.map((s) => ({ label: s.label, stroke: css(s.color), width: 2, points: { show: false }, show: s.show !== false }))],
+    series: [{}, ...real, ...proj],
   };
-  return new uPlot(opts, [[], [], []], el);
+  const empty = [[], ...real.map(() => []), ...proj.map(() => [])];
+  return new uPlot(opts, empty, el);
+}
+
+// Faint dashed vertical line marking "now" — the boundary between history and the
+// forecast region. Positioned at the last sample that still has real (non-projected) data.
+function nowDivider() {
+  return { hooks: { draw: (u) => {
+    const xs = u.data[0];
+    if (!xs || !xs.length) return;
+    let idx = -1;
+    for (let i = xs.length - 1; i >= 0; i--) {
+      if ((u.data[1] && u.data[1][i] != null) || (u.data[2] && u.data[2][i] != null)) { idx = i; break; }
+    }
+    if (idx < 0) return;
+    const x = Math.round(u.valToPos(xs[idx], "x", true)) + 0.5;
+    const ctx = u.ctx;
+    ctx.save();
+    ctx.beginPath();
+    ctx.setLineDash([2, 3]);
+    ctx.strokeStyle = css("--muted");
+    ctx.lineWidth = 1;
+    ctx.moveTo(x, u.bbox.top);
+    ctx.lineTo(x, u.bbox.top + u.bbox.height);
+    ctx.stroke();
+    ctx.restore();
+  } } };
 }
 
 const hm = (tsec) => new Date(tsec * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -151,14 +180,45 @@ function fmtAxis(u, splits) {
 function applyRange(st) {
   if (!st.chart) return;
   const secs = RANGES[range];
-  let vis = st.data;
-  if (secs !== Infinity && st.data[0].length) {
-    const cutoff = st.data[0][st.data[0].length - 1] - secs;
+  let ts = st.data[0], a = st.data[1], b = st.data[2];
+  if (secs !== Infinity && ts.length) {
+    const cutoff = ts[ts.length - 1] - secs;
     let i = 0;
-    while (i < st.data[0].length && st.data[0][i] < cutoff) i++;
-    vis = st.data.map((s) => s.slice(i));
+    while (i < ts.length && ts[i] < cutoff) i++;
+    ts = ts.slice(i); a = a.slice(i); b = b.slice(i);
   }
-  st.chart.setData(vis);
+  st.chart.setData(withProjection(ts, a, b));
+}
+
+function toSamples(ts, ys) {
+  const out = [];
+  for (let i = 0; i < ts.length; i++) out.push({ t: ts[i], y: ys[i] });
+  return out;
+}
+
+// Expand [ts, a, b] into uPlot's 5-row data with a forecast filling the rightmost
+// 25%: [ts, a, b, aProj, bProj]. Real lines go null in the future; projection lines
+// are null across history except an anchor at the last real point so they connect.
+function withProjection(ts, a, b) {
+  const n = ts.length;
+  const noProj = [ts.slice(), a.slice(), b.slice(), a.map(() => null), b.map(() => null)];
+  if (n < 2) return noProj;
+  const now = ts[n - 1];
+  const horizon = (ts[n - 1] - ts[0]) / 3;   // future region = 25% of the total width
+  if (!(horizon > 0)) return noProj;
+  const step = Math.max(horizon / 24, 60);
+  const projA = Predictors.linear.predict(toSamples(ts, a), { now, horizon, step }).points;
+  const projB = Predictors.linear.predict(toSamples(ts, b), { now, horizon, step }).points;
+  const future = projA.slice(1).map((p) => p.t);   // projA/projB share the same time grid
+  const outTs = ts.concat(future);
+  const outA = a.concat(future.map(() => null));
+  const outB = b.concat(future.map(() => null));
+  const outAp = ts.map(() => null), outBp = ts.map(() => null);
+  if (projA.length) outAp[n - 1] = projA[0].y;      // anchor to the last real point
+  if (projB.length) outBp[n - 1] = projB[0].y;
+  for (let i = 1; i < projA.length; i++) outAp.push(projA[i].y);
+  for (let i = 1; i < projB.length; i++) outBp.push(projB[i].y);
+  return [outTs, outA, outB, outAp, outBp];
 }
 function applyRangeAll() { applyRange(C); applyRange(X); renderConsumed(); }
 
@@ -853,11 +913,11 @@ function observeSize(elId, getChart) {
 
 window.addEventListener("load", () => {
   C.chart = makeChart("chart", [{ label: "5h", color: "--fh" }, { label: "7d", color: "--sd" }],
-    [spikeMarkers([1], { 1: "--fh" })]);                       // mark 5-hour spikes
+    [spikeMarkers([1], { 1: "--fh" }), nowDivider()]);         // mark 5-hour spikes
   // Codex has no real 5-hour limit (its 5-hour "Spark" window is feature-specific
   // and usually 0), so hide that series and mark spikes on the 7-day only.
   X.chart = makeChart("cxChart", [{ label: "primary", color: "--cx1", show: false }, { label: "secondary", color: "--sd" }],
-    [spikeMarkers([2], { 2: "--sd" })]);   // 7-day teal, matching Claude
+    [spikeMarkers([2], { 2: "--sd" }), nowDivider()]);   // 7-day teal, matching Claude
   observeSize("chart", () => C.chart);
   observeSize("cxChart", () => X.chart);
   wireControls();

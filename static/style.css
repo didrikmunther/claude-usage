@@ -8,6 +8,9 @@
   --sd: #f59e0b;   /* 7-day (orange) — both Claude and Codex */
   --cx1: #f59e0b;  /* Codex primary  (amber)  */
   --cx2: #8b5cf6;  /* Codex secondary(violet) */
+  --fh-dim: rgba(99,102,241,.40);   /* forecast projection — lighter line colors */
+  --sd-dim: rgba(245,158,11,.40);
+  --cx1-dim: rgba(245,158,11,.40);
   --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
   --radius: 14px;
 }
