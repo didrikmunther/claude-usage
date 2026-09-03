@@ -4,10 +4,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import mod from "./predict.js";
 
-const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt } = mod;
+const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt, hourlyRates } = mod;
 
 // A climbing cycle 0→10 over 300s starting at t0 (drop of 10 marks the reset).
 const climbCycle = (t0) => [0, 1, 2, 3, 4, 5].map((i) => ({ t: t0 + i * 60, y: i * 2 }));
+
+// Deterministic hour-of-day for tests (avoids machine-timezone dependence).
+const utcHour = (t) => Math.floor(t / 3600) % 24;
 
 // +1% per 60s, last observed = 15 at t=300
 const rising = [0, 60, 120, 180, 240, 300].map((t, i) => ({ t, y: 10 + i }));
@@ -142,4 +145,46 @@ test("sampleAt linearly interpolates between points and clamps to the ends", () 
   assert.equal(sampleAt(pts, 150), 10);    // interpolate flat segment
   assert.equal(sampleAt(pts, -10), 0);     // clamp below the first point
   assert.equal(sampleAt(pts, 999), 10);    // clamp above the last point
+});
+
+// ---- time-of-day (cycle+tod) ----
+
+test("hourlyRates buckets in-cycle increments by hour, robust-averaged; sparse → undefined", () => {
+  const pts = [];
+  for (let i = 0; i <= 6; i++) pts.push({ t: i * 600, y: i * 1.2 });        // hour 0: rate 0.002 %/s
+  for (let i = 1; i <= 6; i++) pts.push({ t: 3600 + i * 600, y: 7.2 });     // hour 1: flat
+  const { hourly, overall } = hourlyRates(pts, { hourOf: utcHour, minCount: 3 });
+  assert.ok(Math.abs(hourly[0] - 0.002) < 1e-6);
+  assert.ok(Math.abs(hourly[1] - 0) < 1e-9);
+  assert.equal(hourly[12], undefined);          // no data → undefined (caller falls back)
+  assert.ok(overall > 0);
+});
+
+test("cycle+tod projection applies each hour's rate (climbs fast hours, flat slow hours)", () => {
+  const hourOf = (t) => Math.floor(t / 3600) % 2;   // bucket 0 (fast) / 1 (flat)
+  const pts = [];
+  let y = 0;
+  for (let t = 0; t <= 12 * 3600; t += 600) { pts.push({ t, y }); y += (hourOf(t) === 0 ? 0.001 : 0) * 600; }
+  const now = pts[pts.length - 1].t;
+  const r = Predictors["cycle+tod"].predict(pts, { now, horizon: 2 * 3600, step: 1800, hourOf });
+  const deltas = [];
+  for (let i = 1; i < r.points.length; i++) if (r.points[i].t > now) deltas.push(r.points[i].y - r.points[i - 1].y);
+  assert.ok(deltas.some((d) => Math.abs(d - 1.8) < 0.2), "climbs ~1.8 in a fast hour");
+  assert.ok(deltas.some((d) => Math.abs(d) < 0.05), "≈flat in a slow hour");
+});
+
+test("cycle+tod falls back to the overall rate for hours with no data", () => {
+  const pts = [];
+  let y = 0;
+  for (let t = 0; t <= 3 * 3600; t += 600) { pts.push({ t, y }); y += 0.001 * 600; }   // hours 0–2 only
+  const now = pts[pts.length - 1].t;                                                    // hour 3, no data
+  const r = Predictors["cycle+tod"].predict(pts, { now, horizon: 3600, step: 1800, hourOf: utcHour });
+  assert.ok(r.points[r.points.length - 1].y - r.points[0].y > 0, "climbs via overall-rate fallback");
+});
+
+test("cycle+tod keeps reset drops", () => {
+  const pts = [...climbCycle(0), ...climbCycle(360), ...climbCycle(720), ...climbCycle(1080)];
+  const r = Predictors["cycle+tod"].predict(pts, { now: 1380, horizon: 720, step: 60, hourOf: utcHour });
+  const atReset = r.points.find((p) => Math.abs(p.t - 1440) < 1e-6);
+  assert.ok(atReset && atReset.y < 0.01, "drops to ~0 at the inferred reset");
 });

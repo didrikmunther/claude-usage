@@ -145,6 +145,72 @@ function projectWithResets(pts, rate, P, R, opts, method) {
   return { method, points };
 }
 
+const hourOfLocal = (tSec) => new Date(tSec * 1000).getHours();
+
+// Estimate the burn rate as a function of hour-of-day. For each adjacent in-cycle
+// sample pair, the increment Δy/Δt (clamped ≥0) is bucketed by the hour it started
+// in and robust-averaged. Hours with fewer than `minCount` intervals are left
+// undefined; callers fall back to `overall` (the cross-cycle robust rate).
+function hourlyRates(samples, opts = {}) {
+  const pts = (samples || []).filter((s) => s && s.y != null);
+  const hourOf = opts.hourOf ?? hourOfLocal;
+  const minCount = opts.minCount ?? 3;
+  const buckets = Array.from({ length: 24 }, () => []);
+  for (const cyc of segmentCycles(pts)) {
+    for (let i = 1; i < cyc.length; i++) {
+      const dt = cyc[i].t - cyc[i - 1].t;
+      if (dt <= 0) continue;
+      const rate = Math.max(0, cyc[i].y - cyc[i - 1].y) / dt;
+      buckets[((hourOf(cyc[i - 1].t) % 24) + 24) % 24].push(rate);
+    }
+  }
+  const hourly = buckets.map((b) => (b.length >= minCount ? robustMean(b) : undefined));
+  const slopes = cycleSlopes(pts);
+  const overall = slopes.length ? robustMean(slopes) : leastSquaresSlope(pts);
+  return { hourly, overall };
+}
+
+// Accumulate the projection forward using a time-varying (per-hour) rate, on a
+// ≤1h grid so hours resolve, dropping to 0 at each inferred reset within the horizon.
+function projectTOD(pts, model, reset, opts, method) {
+  const cap = opts.cap ?? 100;
+  const tLast = pts.length ? pts[pts.length - 1].t : (opts.now ?? 0);
+  const yLast = pts.length ? pts[pts.length - 1].y : 0;
+  const now = opts.now ?? tLast;
+  const horizon = opts.horizon ?? 0;
+  const step = (opts.step ?? horizon / 24) || 1;
+  const effStep = Math.max(60, Math.min(step, 3600));   // ≤1h so per-hour rates resolve
+  const hourOf = opts.hourOf ?? hourOfLocal;
+  const clamp = (v) => Math.max(0, Math.min(cap, v));
+  const rateAt = (t) => {
+    const r = model.hourly[((hourOf(t) % 24) + 24) % 24];
+    return Math.max(0, r == null ? model.overall : r);
+  };
+  const hasReset = !!(reset && reset.P > 0);
+  const P = hasReset ? reset.P : 0, R = hasReset ? reset.R : 0;
+  const csNow = hasReset ? R + Math.floor((now - R) / P) * P : 0;
+  const resets = [];
+  if (hasReset) for (let r = csNow + P; r <= now + horizon + 1e-9; r += P) resets.push(r);
+  const eps = Math.min(1, effStep * 1e-3) || 1e-3;
+  const points = [{ t: now, y: clamp(yLast) }];
+  let y = yLast, t = now, ri = 0, guard = 0;
+  while (t < now + horizon - 1e-9 && guard++ < 100000) {
+    const nt = Math.min(t + effStep, now + horizon);
+    if (ri < resets.length && resets[ri] <= nt + 1e-9) {
+      const r = resets[ri];
+      y = clamp(y + rateAt(t) * (r - t));
+      points.push({ t: r - eps, y });
+      points.push({ t: r, y: 0 });
+      y = 0; t = r; ri++;
+      continue;
+    }
+    y = clamp(y + rateAt(t) * (nt - t));
+    points.push({ t: nt, y });
+    t = nt;
+  }
+  return { method, points };
+}
+
 const Predictors = {
   // Simple linear regression over all samples.
   linear: {
@@ -170,10 +236,22 @@ const Predictors = {
         : projectFrom(pts, rate, opts, "cycle");                          // not enough cycles → straight line
     },
   },
+
+  // Cycle + time of day: reset-aware, but the forward rate varies by hour-of-day
+  // (per-hour robust average, falling back to the overall cycle rate for sparse hours).
+  "cycle+tod": {
+    method: "cycle+tod",
+    predict(samples, opts = {}) {
+      const pts = (samples || []).filter((s) => s && s.y != null);
+      const model = hourlyRates(pts, opts);
+      const reset = inferResetPeriod(pts);
+      return projectTOD(pts, model, reset, opts, "cycle+tod");
+    },
+  },
 };
 
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt };
+  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates };
 }
