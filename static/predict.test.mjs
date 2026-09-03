@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import mod from "./predict.js";
 
-const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope } = mod;
+const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly } = mod;
 
 // A climbing cycle 0→10 over 300s starting at t0 (drop of 10 marks the reset).
 const climbCycle = (t0) => [0, 1, 2, 3, 4, 5].map((i) => ({ t: t0 + i * 60, y: i * 2 }));
@@ -160,17 +160,22 @@ test("hourlyRates buckets in-cycle increments by hour, robust-averaged; sparse �
   assert.ok(overall > 0);
 });
 
-test("cycle+tod projection applies each hour's rate (climbs fast hours, flat slow hours)", () => {
-  const hourOf = (t) => Math.floor(t / 3600) % 2;   // bucket 0 (fast) / 1 (flat)
+test("cycle+tod applies the hour-of-day shape when it's well-populated", () => {
+  // 3 days of data; even hours climb, odd hours flat → 12 active hours → full confidence.
+  const hourOf = (t) => Math.floor(t / 3600) % 24;
   const pts = [];
   let y = 0;
-  for (let t = 0; t <= 12 * 3600; t += 600) { pts.push({ t, y }); y += (hourOf(t) === 0 ? 0.001 : 0) * 600; }
+  for (let t = 0; t <= 3 * 86400; t += 600) { pts.push({ t, y }); y += (Math.floor(t / 3600) % 2 === 0 ? 0.0002 : 0) * 600; }  // stays well under 100
   const now = pts[pts.length - 1].t;
-  const r = Predictors["cycle+tod"].predict(pts, { now, horizon: 2 * 3600, step: 1800, hourOf });
-  const deltas = [];
-  for (let i = 1; i < r.points.length; i++) if (r.points[i].t > now) deltas.push(r.points[i].y - r.points[i - 1].y);
-  assert.ok(deltas.some((d) => Math.abs(d - 1.8) < 0.2), "climbs ~1.8 in a fast hour");
-  assert.ok(deltas.some((d) => Math.abs(d) < 0.05), "≈flat in a slow hour");
+  const r = Predictors["cycle+tod"].predict(pts, { now, horizon: 8 * 3600, step: 1800, hourOf });
+  const evenD = [], oddD = [];
+  for (let i = 1; i < r.points.length; i++) {
+    const p0 = r.points[i - 1], p1 = r.points[i];
+    if (p1.t < now + 3 * 3600) continue;   // skip the momentum-dominated near term
+    (Math.floor(p0.t / 3600) % 2 === 0 ? evenD : oddD).push(p1.y - p0.y);
+  }
+  const avg = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
+  assert.ok(avg(evenD) > avg(oddD), "fast (even) hours climb more than slow (odd) hours");
 });
 
 test("cycle+tod falls back to the overall rate for hours with no data", () => {
@@ -284,4 +289,35 @@ test("cycle+tod blends in the recent burst near-term, fading to the historical s
   const dEnd = r.points[r.points.length - 1].y - r.points[r.points.length - 2].y;
   assert.ok(d0 > 1, "near-term reflects the recent burst");
   assert.ok(dEnd < d0, "recent momentum fades over the horizon");
+});
+
+// ---- normalize hour-of-day to the overall consumption rate ----
+
+test("normalizeHourly: day-mean equals overall; a rich shape is preserved", () => {
+  const hourly = Array.from({ length: 24 }, (_, h) => (h < 12 ? 0.001 : 0.003));   // 24 active hours
+  const rate = normalizeHourly(hourly, 0.5, {});
+  assert.ok(Math.abs(rate.reduce((a, b) => a + b, 0) / 24 - 0.5) < 1e-9, "day mean = overall");
+  assert.ok(rate[13] > rate[1], "busy hour stays above quiet hour");
+});
+
+test("normalizeHourly: a sparse shape shrinks toward uniform (idle hours non-zero)", () => {
+  const hourly = Array.from({ length: 24 }, (_, h) => (h === 9 || h === 14 ? 0.02 : 0));  // 2 active hours
+  const rate = normalizeHourly(hourly, 0.5, {});
+  assert.ok(Math.abs(rate.reduce((a, b) => a + b, 0) / 24 - 0.5) < 1e-9, "day mean still = overall");
+  assert.ok(rate[3] > 0.25, "idle hour gets a meaningful share, not ~0");   // ~0.75×overall
+  assert.ok(rate[9] > rate[3], "active hour still higher");
+});
+
+test("normalizeHourly: all-zero or undefined hours → uniform overall", () => {
+  assert.ok(normalizeHourly(new Array(24).fill(0), 0.5, {}).every((r) => Math.abs(r - 0.5) < 1e-9));
+  assert.ok(normalizeHourly(new Array(24).fill(undefined), 0.5, {}).every((r) => Math.abs(r - 0.5) < 1e-9));
+});
+
+test("cycle+tod refills at the overall rate when hour-of-day is sparse (no flat tail)", () => {
+  const DAY = 86400, pts = [];
+  for (let t = 0; t <= 3 * DAY; t += 600) pts.push({ t, y: Math.floor((t / DAY) * 20) });  // coarse climb ~20/day
+  const now = pts[pts.length - 1].t;
+  const r = Predictors["cycle+tod"].predict(pts, { now, horizon: 6 * 3600, step: 1800, hourOf: (t) => Math.floor(t / 3600) % 24 });
+  const late = r.points.filter((p) => p.t >= now + 3 * 3600);          // past the 2h momentum window
+  assert.ok(late[late.length - 1].y - late[0].y > 0, "keeps climbing at the overall rate after momentum fades");
 });

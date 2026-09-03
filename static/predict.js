@@ -262,9 +262,28 @@ function hourlyRates(samples, opts = {}) {
   return { hourly, overall: overallRate(pts, opts) };
 }
 
+// Turn per-hour rates into a full 24-hour rate array anchored to the overall
+// consumption rate: hour-of-day becomes a multiplier (mean 1) on `overall`, so the
+// day's mean rate always equals `overall` (the window refills at the historical
+// pace). When few hours show usage, the shape is shrunk toward uniform (low
+// confidence), so a sparse/bursty series doesn't collapse to ~0.
+function normalizeHourly(hourly, overall, opts = {}) {
+  const fullHours = opts.shapeFullHours ?? 8;
+  const defined = hourly.filter((h) => h != null);
+  const mean = defined.length ? defined.reduce((a, b) => a + b, 0) / defined.length : 0;
+  const nonZero = defined.filter((h) => h > 1e-12).length;
+  const conf = Math.min(1, nonZero / fullHours);
+  const rate = new Array(24);
+  for (let h = 0; h < 24; h++) {
+    const mult = (mean > 1e-12 && hourly[h] != null) ? hourly[h] / mean : 1;   // shape multiplier, mean ≈ 1
+    rate[h] = Math.max(0, overall * (conf * mult + (1 - conf)));               // shrink toward uniform when sparse
+  }
+  return rate;
+}
+
 // Accumulate the projection forward using a time-varying (per-hour) rate, on a
 // ≤1h grid so hours resolve, dropping to 0 at each inferred reset within the horizon.
-function projectTOD(pts, model, reset, opts, method) {
+function projectTOD(pts, hourRate, reset, opts, method) {
   const cap = opts.cap ?? 100;
   const tLast = pts.length ? pts[pts.length - 1].t : (opts.now ?? 0);
   const yLast = pts.length ? pts[pts.length - 1].y : 0;
@@ -276,8 +295,7 @@ function projectTOD(pts, model, reset, opts, method) {
   const clamp = (v) => Math.max(0, Math.min(cap, v));
   const recentSlope = Math.max(0, opts.recentSlope ?? 0);
   const rateAt = (t) => {
-    const h = model.hourly[((hourOf(t) % 24) + 24) % 24];
-    const hist = h == null ? model.overall : h;
+    const hist = hourRate[((hourOf(t) % 24) + 24) % 24];
     const recent = recentSlope * Math.pow(0.5, Math.max(0, t - now) / MOMENTUM_HL);   // fades over ~2h
     return Math.max(0, Math.max(hist, recent));
   };
@@ -338,10 +356,11 @@ const Predictors = {
     predict(samples, opts = {}) {
       const pts = (samples || []).filter((s) => s && s.y != null);
       const model = hourlyRates(pts, opts);
+      const hourRate = normalizeHourly(model.hourly, model.overall, opts);   // anchor hour-of-day to the overall rate
       const reset = inferResetPeriod(pts);
       const now = opts.now ?? (pts.length ? pts[pts.length - 1].t : 0);
       const recentSlope = recentTrailingSlope(pts, now, opts.recentLookback);
-      return projectTOD(pts, model, reset, { ...opts, now, recentSlope }, "cycle+tod");
+      return projectTOD(pts, hourRate, reset, { ...opts, now, recentSlope }, "cycle+tod");
     },
   },
 };
@@ -349,5 +368,5 @@ const Predictors = {
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope };
+  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly };
 }
