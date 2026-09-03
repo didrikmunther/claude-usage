@@ -111,6 +111,17 @@ function recencyWeight(t, now, halfLife) {
   return Math.pow(0.5, Math.max(0, now - t) / (halfLife || 1));
 }
 
+// Recent-trend blend: the live burn rate (last hour of the current cycle) drives the
+// near-term forecast and fades to the historical shape over MOMENTUM_HL.
+const RECENT_LOOKBACK = 3600;      // trailing window for the live slope
+const MOMENTUM_HL = 2 * 3600;      // how fast the live burst fades in the projection
+function recentTrailingSlope(pts, now, lookback = RECENT_LOOKBACK) {
+  const cycles = segmentCycles((pts || []).filter((s) => s && s.y != null));
+  if (!cycles.length) return 0;
+  const seg = cycles[cycles.length - 1].filter((p) => p.t >= now - lookback);  // current cycle only
+  return Math.max(0, leastSquaresSlope(seg));
+}
+
 // Recency-weighted robust mean: weighted mean/std, trim beyond 2σ of the weighted
 // distribution, then the weighted mean of the survivors. A recent, heavily-weighted
 // value shifts the mean toward itself and survives (stale values become the outliers).
@@ -263,9 +274,12 @@ function projectTOD(pts, model, reset, opts, method) {
   const effStep = Math.max(60, Math.min(step, 3600));   // ≤1h so per-hour rates resolve
   const hourOf = opts.hourOf ?? hourOfLocal;
   const clamp = (v) => Math.max(0, Math.min(cap, v));
+  const recentSlope = Math.max(0, opts.recentSlope ?? 0);
   const rateAt = (t) => {
-    const r = model.hourly[((hourOf(t) % 24) + 24) % 24];
-    return Math.max(0, r == null ? model.overall : r);
+    const h = model.hourly[((hourOf(t) % 24) + 24) % 24];
+    const hist = h == null ? model.overall : h;
+    const recent = recentSlope * Math.pow(0.5, Math.max(0, t - now) / MOMENTUM_HL);   // fades over ~2h
+    return Math.max(0, Math.max(hist, recent));
   };
   const hasReset = !!(reset && reset.P > 0);
   const P = hasReset ? reset.P : 0, R = hasReset ? reset.R : 0;
@@ -325,7 +339,9 @@ const Predictors = {
       const pts = (samples || []).filter((s) => s && s.y != null);
       const model = hourlyRates(pts, opts);
       const reset = inferResetPeriod(pts);
-      return projectTOD(pts, model, reset, opts, "cycle+tod");
+      const now = opts.now ?? (pts.length ? pts[pts.length - 1].t : 0);
+      const recentSlope = recentTrailingSlope(pts, now, opts.recentLookback);
+      return projectTOD(pts, model, reset, { ...opts, now, recentSlope }, "cycle+tod");
     },
   },
 };
@@ -333,5 +349,5 @@ const Predictors = {
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight };
+  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope };
 }

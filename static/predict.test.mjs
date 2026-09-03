@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import mod from "./predict.js";
 
-const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight } = mod;
+const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope } = mod;
 
 // A climbing cycle 0→10 over 300s starting at t0 (drop of 10 marks the reset).
 const climbCycle = (t0) => [0, 1, 2, 3, 4, 5].map((i) => ({ t: t0 + i * 60, y: i * 2 }));
@@ -251,4 +251,37 @@ test("recency weighting lifts a recently-active bursty series above the unweight
   const rec = hourlyRates(pts, { hourOf, now, halfLife: 3 * DAY, minCount: 3 });
   const flat = hourlyRates(pts, { hourOf, now, halfLife: Infinity, minCount: 3 });   // no decay
   assert.ok(rec.hourly[0] > flat.hourly[0], "recency raises the current rate estimate");
+});
+
+// ---- recent-trend blend ----
+
+test("recentTrailingSlope = slope over the last hour of the current cycle", () => {
+  const now = 100000, pts = [];
+  for (let t = now - 3600; t <= now; t += 300) pts.push({ t, y: (t - (now - 3600)) * 0.001 });
+  assert.ok(Math.abs(recentTrailingSlope(pts, now, 3600) - 0.001) < 1e-4);
+});
+
+test("recentTrailingSlope is 0 when recent activity is flat", () => {
+  const now = 100000, pts = [];
+  for (let t = now - 3600; t <= now; t += 300) pts.push({ t, y: 50 });
+  assert.equal(recentTrailingSlope(pts, now, 3600), 0);
+});
+
+test("recentTrailingSlope ignores samples before the latest reset", () => {
+  const now = 100000, pts = [];
+  for (let t = now - 8 * 3600; t <= now - 6 * 3600; t += 300) pts.push({ t, y: (t - (now - 8 * 3600)) * 0.002 }); // old climb
+  for (let t = now - 3000; t <= now; t += 300) pts.push({ t, y: 5 });   // recent flat (post-reset)
+  assert.equal(recentTrailingSlope(pts, now, 3600), 0);
+});
+
+test("cycle+tod blends in the recent burst near-term, fading to the historical shape", () => {
+  const now = 10 * 86400, pts = [];
+  for (let t = 0; t <= now - 3600; t += 600) pts.push({ t, y: 50 });                 // long flat/idle history
+  let y = 50;
+  for (let t = now - 3000; t <= now; t += 600) { y += 0.005 * 600; pts.push({ t, y }); }  // recent burst
+  const r = Predictors["cycle+tod"].predict(pts, { now, horizon: 4 * 3600, step: 1800, hourOf: () => 0 });
+  const d0 = r.points[1].y - r.points[0].y;
+  const dEnd = r.points[r.points.length - 1].y - r.points[r.points.length - 2].y;
+  assert.ok(d0 > 1, "near-term reflects the recent burst");
+  assert.ok(dEnd < d0, "recent momentum fades over the horizon");
 });
