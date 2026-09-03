@@ -84,6 +84,24 @@ function robustMean(vals) {
   return mean(kept.length ? kept : vals);
 }
 
+// Linearly interpolate a series of {t, y} points at time `t`, clamping to the ends.
+// Used to resample two projections (which may have different point grids — e.g. a
+// reset-aware line vs a straight one) onto a single shared time axis.
+function sampleAt(points, t) {
+  if (!points.length) return null;
+  if (t <= points[0].t) return points[0].y;
+  const last = points[points.length - 1];
+  if (t >= last.t) return last.y;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].t >= t) {
+      const p0 = points[i - 1], p1 = points[i];
+      const f = (t - p0.t) / ((p1.t - p0.t) || 1);
+      return p0.y + f * (p1.y - p0.y);
+    }
+  }
+  return last.y;
+}
+
 // Shared projection: straight line from the last observed point at `slope` (%/sec),
 // clamped to [0, cap], sampled from `now` to `now + horizon` every `step`.
 function projectFrom(pts, slope, opts, method) {
@@ -157,5 +175,5 @@ const Predictors = {
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod };
+  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt };
 }

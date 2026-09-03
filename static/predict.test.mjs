@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import mod from "./predict.js";
 
-const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod } = mod;
+const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt } = mod;
 
 // A climbing cycle 0→10 over 300s starting at t0 (drop of 10 marks the reset).
 const climbCycle = (t0) => [0, 1, 2, 3, 4, 5].map((i) => ({ t: t0 + i * 60, y: i * 2 }));
@@ -133,4 +133,13 @@ test("cycle projection stays monotonic (no drop) when the period can't be inferr
   for (let i = 1; i < r.points.length; i++) {
     assert.ok(r.points[i].y >= r.points[i - 1].y - 1e-9, "no reset drop");
   }
+});
+
+test("sampleAt linearly interpolates between points and clamps to the ends", () => {
+  const pts = [{ t: 0, y: 0 }, { t: 100, y: 10 }, { t: 200, y: 10 }];
+  assert.equal(sampleAt(pts, 0), 0);       // exact endpoint
+  assert.equal(sampleAt(pts, 50), 5);      // interpolate rising segment
+  assert.equal(sampleAt(pts, 150), 10);    // interpolate flat segment
+  assert.equal(sampleAt(pts, -10), 0);     // clamp below the first point
+  assert.equal(sampleAt(pts, 999), 10);    // clamp above the last point
 });

@@ -214,15 +214,20 @@ function withProjection(ts, a, b) {
   const P = Predictors[forecastModel] || Predictors.linear;
   const projA = P.predict(toSamples(ts, a), { now, horizon, step }).points;
   const projB = P.predict(toSamples(ts, b), { now, horizon, step }).points;
-  const future = projA.slice(1).map((p) => p.t);   // projA/projB share the same time grid
+  // The two series can project on different time grids (e.g. one line hits resets
+  // and the other doesn't), so build a shared future axis from both and resample
+  // each onto it — otherwise the sparser series' projection ends up short and cut off.
+  const ftSet = new Set();
+  for (const p of projA) if (p.t > now) ftSet.add(p.t);
+  for (const p of projB) if (p.t > now) ftSet.add(p.t);
+  const future = [...ftSet].sort((x, y) => x - y);
   const outTs = ts.concat(future);
   const outA = a.concat(future.map(() => null));
   const outB = b.concat(future.map(() => null));
   const outAp = ts.map(() => null), outBp = ts.map(() => null);
   if (projA.length) outAp[n - 1] = projA[0].y;      // anchor to the last real point
   if (projB.length) outBp[n - 1] = projB[0].y;
-  for (let i = 1; i < projA.length; i++) outAp.push(projA[i].y);
-  for (let i = 1; i < projB.length; i++) outBp.push(projB[i].y);
+  for (const t of future) { outAp.push(sampleAt(projA, t)); outBp.push(sampleAt(projB, t)); }
   return [outTs, outA, outB, outAp, outBp];
 }
 function applyRangeAll() { applyRange(C); applyRange(X); renderConsumed(); }
