@@ -18,6 +18,10 @@ const SPIKE_WINS = [300, 900, 1800, 3600, 7200];
 let spikeWin = SPIKE_WINS.includes(Number(localStorage.getItem("spikeWin"))) ? Number(localStorage.getItem("spikeWin")) : 300;
 const winLabel = (sec) => (sec < 3600 ? `${Math.round(sec / 60)}m` : `${Math.round(sec / 3600)}h`);
 
+// Which forecast strategy drives the chart projection (see predict.js).
+const FORECAST_MODELS = ["linear", "cycle"];
+let forecastModel = FORECAST_MODELS.includes(localStorage.getItem("forecastModel")) ? localStorage.getItem("forecastModel") : "linear";
+
 // Claude's four windows (fixed lengths); Codex windows come from the payload.
 // series = index into C.data for the recent-rate method (null → plain cycle
 // average). Only the 5-hour window uses the reactive method; weekly windows
@@ -207,8 +211,9 @@ function withProjection(ts, a, b) {
   const horizon = (ts[n - 1] - ts[0]) / 3;   // future region = 25% of the total width
   if (!(horizon > 0)) return noProj;
   const step = Math.max(horizon / 24, 60);
-  const projA = Predictors.linear.predict(toSamples(ts, a), { now, horizon, step }).points;
-  const projB = Predictors.linear.predict(toSamples(ts, b), { now, horizon, step }).points;
+  const P = Predictors[forecastModel] || Predictors.linear;
+  const projA = P.predict(toSamples(ts, a), { now, horizon, step }).points;
+  const projB = P.predict(toSamples(ts, b), { now, horizon, step }).points;
   const future = projA.slice(1).map((p) => p.t);   // projA/projB share the same time grid
   const outTs = ts.concat(future);
   const outA = a.concat(future.map(() => null));
@@ -592,6 +597,17 @@ function wireSpikeWin() {
   });
 }
 
+function wireForecastModel() {
+  const sel = $("forecastModel");
+  if (!sel) return;
+  sel.value = forecastModel;
+  sel.addEventListener("change", () => {
+    forecastModel = sel.value;
+    localStorage.setItem("forecastModel", forecastModel);
+    applyRangeAll();                   // rebuild the projection with the chosen predictor
+  });
+}
+
 function setIntervalUI(n) {
   $("ivalNum").value = n;
   $("ival").value = Math.min(Number($("ival").max), n);
@@ -923,6 +939,7 @@ window.addEventListener("load", () => {
   wireControls();
   wireRange();
   wireSpikeWin();
+  wireForecastModel();
   wireUpdate();
   wireCheckUpdate();
   claudeGauge = makeGauge("claudeGauge", [0.3, 0.6]);   // 0–100 %/h dial, red from 60
