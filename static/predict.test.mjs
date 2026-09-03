@@ -4,7 +4,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import mod from "./predict.js";
 
-const { Predictors, segmentCycles, cycleSlopes, robustMean } = mod;
+const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod } = mod;
+
+// A climbing cycle 0→10 over 300s starting at t0 (drop of 10 marks the reset).
+const climbCycle = (t0) => [0, 1, 2, 3, 4, 5].map((i) => ({ t: t0 + i * 60, y: i * 2 }));
 
 // +1% per 60s, last observed = 15 at t=300
 const rising = [0, 60, 120, 180, 240, 300].map((t, i) => ({ t, y: 10 + i }));
@@ -97,4 +100,37 @@ test("cycle falls back to a flat line when there are no fittable cycles", () => 
   const two = [{ t: 0, y: 7 }, { t: 60, y: 7 }];
   const r = Predictors.cycle.predict(two, { now: 60, horizon: 120, step: 60 });
   assert.ok(r.points.every((p) => p.y === 7));
+});
+
+// ---- reset-aware projection ----
+
+test("inferResetPeriod finds the reset period and last reset from cycles", () => {
+  const pts = [...climbCycle(0), ...climbCycle(360), ...climbCycle(720), ...climbCycle(1080)];
+  const r = inferResetPeriod(pts);
+  assert.equal(r.P, 360);
+  assert.equal(r.R, 1080);
+});
+
+test("inferResetPeriod returns null with too few cycles", () => {
+  assert.equal(inferResetPeriod([...climbCycle(0), ...climbCycle(360)]), null);
+});
+
+test("cycle projection drops to 0 at the inferred reset and resumes", () => {
+  const pts = [...climbCycle(0), ...climbCycle(360), ...climbCycle(720), ...climbCycle(1080)];
+  // P=360, R=1080, now=1380, yLast=10 → next reset at 1440, inside a 720s horizon.
+  const r = Predictors.cycle.predict(pts, { now: 1380, horizon: 720, step: 60 });
+  const atReset = r.points.find((p) => Math.abs(p.t - 1440) < 1e-6);
+  assert.ok(atReset && atReset.y < 0.01, "drops to ~0 at the reset");
+  const beforeReset = r.points.filter((p) => p.t < 1440).pop();
+  assert.ok(beforeReset.y > 5, "climbs before the reset");
+  const afterReset = r.points.find((p) => p.t > 1440);
+  assert.ok(afterReset.y >= 0 && afterReset.y < beforeReset.y, "resumes from low after the reset");
+});
+
+test("cycle projection stays monotonic (no drop) when the period can't be inferred", () => {
+  const pts = [...climbCycle(0), ...climbCycle(360)];   // only 2 cycles → no period
+  const r = Predictors.cycle.predict(pts, { now: 660, horizon: 300, step: 60 });
+  for (let i = 1; i < r.points.length; i++) {
+    assert.ok(r.points[i].y >= r.points[i - 1].y - 1e-9, "no reset drop");
+  }
 });

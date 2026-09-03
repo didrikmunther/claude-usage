@@ -20,7 +20,7 @@ const winLabel = (sec) => (sec < 3600 ? `${Math.round(sec / 60)}m` : `${Math.rou
 
 // Which forecast strategy drives the chart projection (see predict.js).
 const FORECAST_MODELS = ["linear", "cycle"];
-let forecastModel = FORECAST_MODELS.includes(localStorage.getItem("forecastModel")) ? localStorage.getItem("forecastModel") : "linear";
+let forecastModel = FORECAST_MODELS.includes(localStorage.getItem("forecastModel")) ? localStorage.getItem("forecastModel") : "cycle";
 
 // Claude's four windows (fixed lengths); Codex windows come from the payload.
 // series = index into C.data for the recent-rate method (null → plain cycle

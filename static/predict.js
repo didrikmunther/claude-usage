@@ -54,6 +54,22 @@ function cycleSlopes(pts) {
   return out;
 }
 
+// Infer the reset schedule from the cycle boundaries: period P = median gap between
+// consecutive resets, R = the most recent reset time. null when there aren't enough
+// cycles to estimate a period (need at least two observed resets).
+function inferResetPeriod(pts) {
+  const cycles = segmentCycles((pts || []).filter((s) => s && s.y != null));
+  if (cycles.length < 3) return null;
+  const markers = cycles.slice(1).map((c) => c[0].t);   // each cycle after the first begins just after a reset
+  const gaps = [];
+  for (let i = 1; i < markers.length; i++) gaps.push(markers[i] - markers[i - 1]);
+  if (!gaps.length) return null;
+  gaps.sort((a, b) => a - b);
+  const P = gaps[Math.floor(gaps.length / 2)];          // median period
+  if (!(P > 0)) return null;
+  return { P, R: markers[markers.length - 1] };
+}
+
 // Outlier-trimmed mean: treat the values as a normal distribution and, once there
 // are enough of them, drop anything beyond 2σ before averaging. Small samples are
 // averaged as-is. null for an empty input.
@@ -84,6 +100,33 @@ function projectFrom(pts, slope, opts, method) {
   return { method, points };
 }
 
+// Reset-aware projection: climb at `rate`, dropping to 0 at each inferred reset
+// (period P, last reset R) that falls within the horizon, then resume climbing.
+function projectWithResets(pts, rate, P, R, opts, method) {
+  const cap = opts.cap ?? 100;
+  const tLast = pts.length ? pts[pts.length - 1].t : (opts.now ?? 0);
+  const yLast = pts.length ? pts[pts.length - 1].y : 0;
+  const now = opts.now ?? tLast;
+  const horizon = opts.horizon ?? 0;
+  const step = (opts.step ?? horizon / 24) || 1;
+  const clamp = (y) => Math.max(0, Math.min(cap, y));
+  const csNow = R + Math.floor((now - R) / P) * P;        // reset time that started the current cycle
+  const climbAt = (t) => {
+    const cs = R + Math.floor((t - R) / P) * P;
+    return cs <= csNow + 1e-9
+      ? clamp(yLast + rate * (t - now))                    // still in the current cycle → anchored to yLast
+      : clamp(rate * (t - cs));                            // a later cycle → climb from 0
+  };
+  // Sample the horizon, and add a point just-before + at each reset so the drop is crisp.
+  const eps = Math.min(1, step * 1e-3) || 1e-3;
+  const times = new Set();
+  for (let t = now; t <= now + horizon + 1e-6; t += step) times.add(t);
+  times.add(now + horizon);
+  for (let r = csNow + P; r <= now + horizon + 1e-9; r += P) { times.add(r - eps); times.add(r); }
+  const points = [...times].sort((a, b) => a - b).map((t) => ({ t, y: climbAt(t) }));
+  return { method, points };
+}
+
 const Predictors = {
   // Simple linear regression over all samples.
   linear: {
@@ -102,8 +145,11 @@ const Predictors = {
     predict(samples, opts = {}) {
       const pts = (samples || []).filter((s) => s && s.y != null);
       const slopes = cycleSlopes(pts);
-      const rate = slopes.length ? robustMean(slopes) : leastSquaresSlope(pts);
-      return projectFrom(pts, rate ?? 0, opts, "cycle");
+      const rate = (slopes.length ? robustMean(slopes) : leastSquaresSlope(pts)) ?? 0;
+      const reset = inferResetPeriod(pts);
+      return reset
+        ? projectWithResets(pts, rate, reset.P, reset.R, opts, "cycle")   // drop to 0 at each reset
+        : projectFrom(pts, rate, opts, "cycle");                          // not enough cycles → straight line
     },
   },
 };
@@ -111,5 +157,5 @@ const Predictors = {
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope };
+  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod };
 }
