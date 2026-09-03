@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import mod from "./predict.js";
 
-const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt, hourlyRates } = mod;
+const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries } = mod;
 
 // A climbing cycle 0→10 over 300s starting at t0 (drop of 10 marks the reset).
 const climbCycle = (t0) => [0, 1, 2, 3, 4, 5].map((i) => ({ t: t0 + i * 60, y: i * 2 }));
@@ -187,4 +187,36 @@ test("cycle+tod keeps reset drops", () => {
   const r = Predictors["cycle+tod"].predict(pts, { now: 1380, horizon: 720, step: 60, hourOf: utcHour });
   const atReset = r.points.find((p) => Math.abs(p.t - 1440) < 1e-6);
   assert.ok(atReset && atReset.y < 0.01, "drops to ~0 at the inferred reset");
+});
+
+// ---- 7-day derived from 5-hour ----
+
+test("consumptionRatio = Σ positive 7-day increments / Σ positive 5-hour increments", () => {
+  const a = [0, 10, 20, 5, 15];   // positive increments: 10+10+10 = 30 (drop 20→5 ignored)
+  const b = [0, 1, 2, 2, 3];      // positive increments: 1+1+1 = 3
+  assert.ok(Math.abs(consumptionRatio(a, b) - 0.1) < 1e-9);
+});
+
+test("consumptionRatio is null when the source barely moves", () => {
+  assert.equal(consumptionRatio([0, 0.2, 0.3], [0, 5, 10]), null);   // Σd(source) < 1 → not derivable
+  assert.equal(consumptionRatio([0, 0, 0], [0, 1, 2]), null);
+});
+
+test("deriveSeries integrates source consumption, holding across source resets", () => {
+  const src = [
+    { t: 0, y: 50 }, { t: 1, y: 60 }, { t: 2, y: 70 },
+    { t: 3, y: 0 },                                     // source (5-hour) reset
+    { t: 4, y: 10 }, { t: 5, y: 20 },
+  ];
+  const d = deriveSeries(src, 20, 0.1, 100);
+  assert.equal(d[0].y, 20);                     // anchored at the current 7-day value
+  assert.ok(Math.abs(d[2].y - 22) < 1e-9);      // 20 + 0.1*20
+  assert.equal(d[3].y, d[2].y);                 // 7-day holds across the 5-hour reset
+  assert.ok(Math.abs(d[5].y - 24) < 1e-9);      // 20 + 0.1*40
+  for (let i = 1; i < d.length; i++) assert.ok(d[i].y >= d[i - 1].y - 1e-9, "monotonic");
+});
+
+test("deriveSeries clamps to cap", () => {
+  const d = deriveSeries([{ t: 0, y: 0 }, { t: 1, y: 100 }], 90, 1, 100);
+  assert.equal(d[1].y, 100);
 });

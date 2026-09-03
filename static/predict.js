@@ -84,6 +84,36 @@ function robustMean(vals) {
   return mean(kept.length ? kept : vals);
 }
 
+// The 5-hour and 7-day windows meter the same usage against fixed limits, so
+// Δ7day/Δ5hour is a constant ratio (limit_5h / limit_7d). Estimate it from history:
+// Σ(positive 7-day increments) / Σ(positive 5-hour increments). null when the source
+// barely moves (< 1 point consumed) — then the 7-day can't be meaningfully derived.
+function consumptionRatio(sourceVals, targetVals) {
+  let sSrc = 0, sTgt = 0, pSrc = null, pTgt = null;
+  for (let i = 0; i < sourceVals.length; i++) {
+    const s = sourceVals[i], t = targetVals[i];
+    if (s != null) { if (pSrc != null && s > pSrc) sSrc += s - pSrc; pSrc = s; }
+    if (t != null) { if (pTgt != null && t > pTgt) sTgt += t - pTgt; pTgt = t; }
+  }
+  if (!(sSrc > 1)) return null;
+  const r = sTgt / sSrc;
+  return Number.isFinite(r) ? r : null;
+}
+
+// Derive the 7-day projection from the 5-hour projection: it rises by `r` per unit
+// of source consumption (sum of the source's positive increments — a source reset
+// drop is not consumption, so the 7-day holds across it). Anchored at `targetLast`.
+function deriveSeries(sourcePoints, targetLast, r, cap = 100) {
+  const out = [];
+  let cum = 0, prev = null;
+  for (const p of sourcePoints) {
+    if (prev != null && p.y > prev) cum += p.y - prev;
+    prev = p.y;
+    out.push({ t: p.t, y: Math.max(0, Math.min(cap, targetLast + r * cum)) });
+  }
+  return out;
+}
+
 // Linearly interpolate a series of {t, y} points at time `t`, clamping to the ends.
 // Used to resample two projections (which may have different point grids — e.g. a
 // reset-aware line vs a straight one) onto a single shared time axis.
@@ -253,5 +283,5 @@ const Predictors = {
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates };
+  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries };
 }

@@ -199,6 +199,10 @@ function toSamples(ts, ys) {
   for (let i = 0; i < ts.length; i++) out.push({ t: ts[i], y: ys[i] });
   return out;
 }
+function lastNonNull(arr) {
+  for (let i = arr.length - 1; i >= 0; i--) if (arr[i] != null) return arr[i];
+  return 0;
+}
 
 // Expand [ts, a, b] into uPlot's 5-row data with a forecast filling the rightmost
 // 25%: [ts, a, b, aProj, bProj]. Real lines go null in the future; projection lines
@@ -213,7 +217,13 @@ function withProjection(ts, a, b) {
   const step = Math.max(horizon / 24, 60);
   const P = Predictors[forecastModel] || Predictors.linear;
   const projA = P.predict(toSamples(ts, a), { now, horizon, step }).points;
-  const projB = P.predict(toSamples(ts, b), { now, horizon, step }).points;
+  // Derive the 7-day (b) from the 5-hour (a) projection when they're linked by a
+  // stable consumption ratio; otherwise forecast it independently (e.g. Codex, whose
+  // 5-hour "Spark" window sits at ~0 → no ratio → falls back here).
+  const ratio = consumptionRatio(a, b);
+  const projB = ratio != null
+    ? deriveSeries(projA, lastNonNull(b), ratio, 100)
+    : P.predict(toSamples(ts, b), { now, horizon, step }).points;
   // The two series can project on different time grids (e.g. one line hits resets
   // and the other doesn't), so build a shared future axis from both and resample
   // each onto it — otherwise the sparser series' projection ends up short and cut off.
