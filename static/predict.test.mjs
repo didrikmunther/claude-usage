@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import mod from "./predict.js";
 
-const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries } = mod;
+const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight } = mod;
 
 // A climbing cycle 0→10 over 300s starting at t0 (drop of 10 marks the reset).
 const climbCycle = (t0) => [0, 1, 2, 3, 4, 5].map((i) => ({ t: t0 + i * 60, y: i * 2 }));
@@ -219,4 +219,36 @@ test("deriveSeries integrates source consumption, holding across source resets",
 test("deriveSeries clamps to cap", () => {
   const d = deriveSeries([{ t: 0, y: 0 }, { t: 1, y: 100 }], 90, 1, 100);
   assert.equal(d[1].y, 100);
+});
+
+// ---- recency weighting ----
+
+test("recencyWeight is 1.0 at age 0 and 0.5 at the half-life", () => {
+  assert.equal(recencyWeight(100, 100, 3 * 86400), 1);
+  assert.ok(Math.abs(recencyWeight(100 - 3 * 86400, 100, 3 * 86400) - 0.5) < 1e-9);
+});
+
+test("weightedRobustMean: equal weights == plain mean; weights bias toward heavier values", () => {
+  assert.equal(weightedRobustMean([1, 2, 3], [1, 1, 1]), 2);
+  assert.ok(Math.abs(weightedRobustMean([0, 10], [1, 3]) - 7.5) < 1e-9);   // n<4 → no trim
+});
+
+test("weightedRobustMean keeps a heavily-weighted recent value that robustMean would trim", () => {
+  const vals = [0, 0, 0, 0, 0, 10];
+  assert.ok(robustMean(vals) < 1, "unweighted trims the 10 to ~0");
+  assert.ok(weightedRobustMean(vals, [1, 1, 1, 1, 1, 50]) > 5, "weighted keeps the recent burst");
+});
+
+test("recency weighting lifts a recently-active bursty series above the unweighted estimate", () => {
+  const hourOf = () => 0;   // all increments land in one bucket
+  const DAY = 86400;
+  const pts = [];
+  let y = 0;
+  for (let d = 0; d < 5; d++) for (let k = 0; k < 6; k++) pts.push({ t: d * DAY + k * 600, y });   // 5 idle days
+  const base = 5 * DAY;
+  for (let k = 0; k <= 12; k++) { pts.push({ t: base + k * 600, y }); y += 0.01 * 600; }            // recent active day
+  const now = pts[pts.length - 1].t;
+  const rec = hourlyRates(pts, { hourOf, now, halfLife: 3 * DAY, minCount: 3 });
+  const flat = hourlyRates(pts, { hourOf, now, halfLife: Infinity, minCount: 3 });   // no decay
+  assert.ok(rec.hourly[0] > flat.hourly[0], "recency raises the current rate estimate");
 });

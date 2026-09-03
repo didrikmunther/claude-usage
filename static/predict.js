@@ -54,6 +54,26 @@ function cycleSlopes(pts) {
   return out;
 }
 
+// Per-cycle slopes tagged with the cycle's most-recent timestamp (for recency weighting).
+function cycleSlopesWithTime(pts) {
+  const out = [];
+  for (const cyc of segmentCycles(pts)) {
+    if (cyc.length < 3 || cyc[cyc.length - 1].t - cyc[0].t < 180) continue;
+    out.push({ slope: leastSquaresSlope(cyc), t: cyc[cyc.length - 1].t });
+  }
+  return out;
+}
+
+// Overall burn rate = recency-weighted robust mean of the per-cycle slopes
+// (recent cycles count more). Falls back to a plain fit when there are no cycles.
+function overallRate(pts, opts = {}) {
+  const now = opts.now ?? (pts.length ? pts[pts.length - 1].t : 0);
+  const halfLife = opts.halfLife ?? HALF_LIFE;
+  const cs = cycleSlopesWithTime(pts);
+  if (!cs.length) return leastSquaresSlope(pts);
+  return weightedRobustMean(cs.map((c) => c.slope), cs.map((c) => recencyWeight(c.t, now, halfLife)));
+}
+
 // Infer the reset schedule from the cycle boundaries: period P = median gap between
 // consecutive resets, R = the most recent reset time. null when there aren't enough
 // cycles to estimate a period (need at least two observed resets).
@@ -82,6 +102,35 @@ function robustMean(vals) {
   if (std < 1e-12) return m;                       // all equal — nothing to trim
   const kept = vals.filter((v) => Math.abs((v - m) / std) <= 2);
   return mean(kept.length ? kept : vals);
+}
+
+// Recency weight: 1.0 at age 0, halving every `halfLife` seconds. Habits change, so
+// older observations count for less. Default half-life is 3 days.
+const HALF_LIFE = 3 * 86400;
+function recencyWeight(t, now, halfLife) {
+  return Math.pow(0.5, Math.max(0, now - t) / (halfLife || 1));
+}
+
+// Recency-weighted robust mean: weighted mean/std, trim beyond 2σ of the weighted
+// distribution, then the weighted mean of the survivors. A recent, heavily-weighted
+// value shifts the mean toward itself and survives (stale values become the outliers).
+function weightedRobustMean(values, weights) {
+  const n = values.length;
+  if (!n) return null;
+  const wmean = (vs, ws) => {
+    let sw = 0, sv = 0;
+    for (let i = 0; i < vs.length; i++) { sw += ws[i]; sv += ws[i] * vs[i]; }
+    return sw > 0 ? sv / sw : 0;
+  };
+  if (n < 4) return wmean(values, weights);
+  const m = wmean(values, weights);
+  let sw = 0, svar = 0;
+  for (let i = 0; i < n; i++) { sw += weights[i]; svar += weights[i] * (values[i] - m) ** 2; }
+  const std = Math.sqrt(sw > 0 ? svar / sw : 0);
+  if (std < 1e-12) return m;
+  const kv = [], kw = [];
+  for (let i = 0; i < n; i++) if (Math.abs((values[i] - m) / std) <= 2) { kv.push(values[i]); kw.push(weights[i]); }
+  return kv.length ? wmean(kv, kw) : m;
 }
 
 // The 5-hour and 7-day windows meter the same usage against fixed limits, so
@@ -185,19 +234,21 @@ function hourlyRates(samples, opts = {}) {
   const pts = (samples || []).filter((s) => s && s.y != null);
   const hourOf = opts.hourOf ?? hourOfLocal;
   const minCount = opts.minCount ?? 3;
-  const buckets = Array.from({ length: 24 }, () => []);
+  const now = opts.now ?? (pts.length ? pts[pts.length - 1].t : 0);
+  const halfLife = opts.halfLife ?? HALF_LIFE;
+  const buckets = Array.from({ length: 24 }, () => ({ r: [], w: [] }));
   for (const cyc of segmentCycles(pts)) {
     for (let i = 1; i < cyc.length; i++) {
       const dt = cyc[i].t - cyc[i - 1].t;
       if (dt <= 0) continue;
       const rate = Math.max(0, cyc[i].y - cyc[i - 1].y) / dt;
-      buckets[((hourOf(cyc[i - 1].t) % 24) + 24) % 24].push(rate);
+      const b = buckets[((hourOf(cyc[i - 1].t) % 24) + 24) % 24];
+      b.r.push(rate);
+      b.w.push(recencyWeight(cyc[i - 1].t, now, halfLife));   // older increments count for less
     }
   }
-  const hourly = buckets.map((b) => (b.length >= minCount ? robustMean(b) : undefined));
-  const slopes = cycleSlopes(pts);
-  const overall = slopes.length ? robustMean(slopes) : leastSquaresSlope(pts);
-  return { hourly, overall };
+  const hourly = buckets.map((b) => (b.r.length >= minCount ? weightedRobustMean(b.r, b.w) : undefined));
+  return { hourly, overall: overallRate(pts, opts) };
 }
 
 // Accumulate the projection forward using a time-varying (per-hour) rate, on a
@@ -258,8 +309,7 @@ const Predictors = {
     method: "cycle",
     predict(samples, opts = {}) {
       const pts = (samples || []).filter((s) => s && s.y != null);
-      const slopes = cycleSlopes(pts);
-      const rate = (slopes.length ? robustMean(slopes) : leastSquaresSlope(pts)) ?? 0;
+      const rate = overallRate(pts, opts) ?? 0;   // recency-weighted cross-cycle rate
       const reset = inferResetPeriod(pts);
       return reset
         ? projectWithResets(pts, rate, reset.P, reset.R, opts, "cycle")   // drop to 0 at each reset
@@ -283,5 +333,5 @@ const Predictors = {
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries };
+  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight };
 }
