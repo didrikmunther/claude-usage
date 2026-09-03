@@ -9,3 +9,6 @@ __pycache__/
 
 # Local runtime data (also lives in ~/.claude-usage, never in the repo)
 *.db
+
+# Swift build artifacts (from local native-rewrite experiments)
+.build/
