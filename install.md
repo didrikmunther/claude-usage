@@ -38,11 +38,11 @@ click **Always Allow**."* (Without this, Claude data can't be read.)
 ## 4. Verify
 ```bash
 sleep 6
-curl -sf http://127.0.0.1:8787/api/latest >/dev/null && echo "✓ server up" || echo "not up yet — check ~/.claude-usage/server.err.log"
+curl -sf http://127.0.0.1:44405/api/latest >/dev/null && echo "✓ server up" || echo "not up yet — check ~/.claude-usage/server.err.log"
 ```
 Then tell the user: the menu bar now shows `x%Xh` (5-hour % + hours to reset);
 clicking it drops down the full dashboard, or they can open
-**http://127.0.0.1:8787**.
+**http://127.0.0.1:44405**.
 
 ## What it does (so you can reassure the user)
 Everything runs locally and binds `127.0.0.1` only. It reads the Claude desktop

@@ -8,7 +8,7 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 MB_LABEL="com.claude-usage.menubar"
 MB_PLIST="$HOME/Library/LaunchAgents/$MB_LABEL.plist"
 DATA="$HOME/.claude-usage"
-PORT="${CLAUDE_USAGE_PORT:-8787}"
+PORT="${CLAUDE_USAGE_PORT:-44405}"
 UPLOT_VER="1.6.31"
 
 echo "→ project: $DIR"

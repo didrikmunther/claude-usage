@@ -19,7 +19,7 @@ spike markers.
 
 - **Menu bar:** shows `x%Xh` (5-hour % + hours to reset). Click it to drop the
   full dashboard down as a panel (a webview of the local server).
-- **Dashboard** (`http://127.0.0.1:8787`): Claude and Codex side by side —
+- **Dashboard** (`http://127.0.0.1:44405`): Claude and Codex side by side —
   5h/weekly bars with reset countdowns, a uPlot history graph (24h / week /
   full), a "used this range" tally, per-window forecasts, and hover-to-reveal
   markers on your biggest spikes.
@@ -53,7 +53,7 @@ loads two per-user LaunchAgents (auto-start at login, keep-alive):
 On first launch macOS prompts for a Keychain item (**`Claude Safe Storage`** for
 the desktop app, or **`Claude Code-credentials`** if only the CLI is present) —
 click **Always Allow** (after that it's silent). Then click the usage item in
-your menu bar, or open **http://127.0.0.1:8787**.
+your menu bar, or open **http://127.0.0.1:44405**.
 
 ## Security — what it accesses, and what stays local
 
@@ -129,7 +129,7 @@ with local edits or unpushed commits is left untouched.
 
 ## Config
 
-- **Port:** `CLAUDE_USAGE_PORT` (default 8787). Binds `127.0.0.1` only.
+- **Port:** `CLAUDE_USAGE_PORT` (default 44405). Binds `127.0.0.1` only.
 - **Claude source:** the desktop app is used if installed (fast polling), else
   the CLI OAuth token (gentler polling). The desktop path auto-detects the org
   (override with `CLAUDE_USAGE_ORG`); the CLI path needs no org id.

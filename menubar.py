@@ -27,7 +27,7 @@ from WebKit import WKWebView, WKWebViewConfiguration
 
 from menubar_fmt import lines_for
 
-PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "8787"))
+PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "44405"))
 BASE = f"http://127.0.0.1:{PORT}"
 REFRESH_SEC = 30
 POPW, POPH, HEADER_H = 960, 680, 36

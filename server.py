@@ -28,7 +28,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
 DB_PATH = os.path.expanduser("~/.claude-usage/usage.db")
 HOST = os.environ.get("CLAUDE_USAGE_HOST", "127.0.0.1")
-PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "8787"))
+PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "44405"))
 FETCH_TIMEOUT = 45      # hard cap on a single poll; guards against wake-from-sleep hangs
 CLAUDE_MIN_INTERVAL = 300  # The CLI's oauth/usage endpoint is tightly (hourly)
                            # rate-limited and shared with Claude Code's own /usage
