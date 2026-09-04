@@ -138,25 +138,6 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
 .swatch.cx1 { background: var(--cx1); } .swatch.cx2 { background: var(--cx2); }
 #chart { width: 100%; }
 
-/* spike markers (top-3 5-min rate), transparent until hovered */
-.gmark { position: absolute; transform: translate(-50%, -50%); z-index: 5; cursor: default; }
-.gnum {
-  display: flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px; border-radius: 50%;
-  background: var(--card); border: 2px solid var(--fh); color: var(--ink);
-  font-size: 10px; font-weight: 700; box-shadow: 0 1px 3px rgba(16,24,40,.25);
-  opacity: .38; transition: opacity .15s, transform .15s;
-}
-.gmark:hover .gnum { opacity: 1; transform: scale(1.15); }
-.mtip {
-  position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
-  white-space: nowrap; background: var(--ink); color: var(--bg);
-  font-size: 11px; padding: 3px 8px; border-radius: 6px; pointer-events: none;
-  opacity: 0; transition: opacity .15s;
-}
-.gmark:hover .mtip { opacity: 1; }
-.gmark.tip-below .mtip { bottom: auto; top: 24px; }
-
 .prog-card { padding: 14px 16px; margin-bottom: 24px; }
 .prog-head { font-size: 12px; margin-bottom: 10px; }
 .prog { display: grid; gap: 8px; }

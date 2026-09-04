@@ -13,11 +13,6 @@ const MIN_ELAPSED_MS = 10 * 60e3;   // ignore the noisy first minutes of a cycle
 const RANGES = { "24h": 24 * 3600, "7d": 7 * 24 * 3600, full: Infinity };
 let range = RANGES[localStorage.getItem("range")] !== undefined ? localStorage.getItem("range") : "24h";
 
-// Trailing window (seconds) used to rank the spike badges.
-const SPIKE_WINS = [300, 900, 1800, 3600, 7200];
-let spikeWin = SPIKE_WINS.includes(Number(localStorage.getItem("spikeWin"))) ? Number(localStorage.getItem("spikeWin")) : 300;
-const winLabel = (sec) => (sec < 3600 ? `${Math.round(sec / 60)}m` : `${Math.round(sec / 3600)}h`);
-
 // Which forecast strategy drives the chart projection (see predict.js).
 const FORECAST_MODELS = ["linear", "cycle", "cycle+tod"];
 let forecastModel = FORECAST_MODELS.includes(localStorage.getItem("forecastModel")) ? localStorage.getItem("forecastModel") : "cycle+tod";
@@ -87,85 +82,6 @@ function nowDivider() {
     ctx.stroke();
     ctx.restore();
   } } };
-}
-
-const hm = (tsec) => new Date(tsec * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-
-// Top-3 points by trailing-`winSec` consumption (reset-proof: uses cumulative
-// positive increments). Spread apart so the three markers land on distinct spikes.
-function top3Spikes(ts, ys, winSec) {
-  const n = ts.length;
-  if (n < 3) return [];
-  const cum = new Array(n);
-  let acc = 0, prev = null;
-  for (let i = 0; i < n; i++) {
-    const v = ys[i];
-    if (v != null) { if (prev != null && v > prev) acc += v - prev; prev = v; }
-    cum[i] = acc;
-  }
-  const cand = [];
-  let lo = 0;
-  for (let i = 0; i < n; i++) {
-    if (ys[i] == null) continue;
-    while (lo < i && ts[i] - ts[lo] > winSec) lo++;   // lo = oldest sample within the window
-    const rate = cum[i] - cum[lo];                    // % consumed in the trailing window
-    if (rate > 0) cand.push({ t: ts[i], y: ys[i], rate });
-  }
-  cand.sort((a, b) => b.rate - a.rate);
-  const sep = Math.max(winSec, (ts[n - 1] - ts[0]) / 25);
-  const picked = [];
-  for (const c of cand) {
-    if (picked.every((p) => Math.abs(p.t - c.t) > sep)) picked.push(c);
-    if (picked.length === 3) break;
-  }
-  return picked;
-}
-
-// uPlot plugin: numbered circles at the top-3 5-min spikes, transparent until hover.
-// pref = series indices to measure (first with data wins); accents = {idx: cssVar}.
-function spikeMarkers(pref, accents) {
-  let els = null;
-  // uPlot fires "draw" before "ready" on first render, so create the elements
-  // lazily here (never in "ready") to guarantee they exist before we use them.
-  const ensure = (u) => {
-    if (els) return;
-    els = [];
-    for (let r = 0; r < 3; r++) {
-      const el = document.createElement("div");
-      el.className = "gmark";
-      el.innerHTML = `<span class="gnum">${r + 1}</span><div class="mtip"></div>`;
-      el.style.display = "none";
-      u.over.appendChild(el);
-      els.push(el);
-    }
-  };
-  return {
-    hooks: {
-      draw: (u) => {
-        ensure(u);
-        // Measure whichever preferred series actually moves the most — Codex's
-        // 5-hour window can sit flat at 0 while the 7-day is the one with spikes.
-        let picked = [], color = css("--fh"), best = -1;
-        for (const idx of pref) {
-          if (!(u.data[idx] || []).some((v) => v != null)) continue;
-          const sp = top3Spikes(u.data[0], u.data[idx], spikeWin);
-          const score = sp.reduce((s, p) => s + p.rate, 0);
-          if (score > best) { best = score; picked = sp; color = css(accents[idx]); }
-        }
-        for (let r = 0; r < 3; r++) {
-          const el = els[r], p = picked[r];
-          if (!p) { el.style.display = "none"; continue; }
-          const top = u.valToPos(p.y, "y");
-          el.style.display = "";
-          el.style.left = u.valToPos(p.t, "x") + "px";
-          el.style.top = top + "px";
-          el.classList.toggle("tip-below", top < 44);
-          el.querySelector(".gnum").style.borderColor = color;
-          el.querySelector(".mtip").textContent = `#${r + 1} · +${Math.round(p.rate)}% in ${winLabel(spikeWin)} · ${hm(p.t)}`;
-        }
-      },
-    },
-  };
 }
 
 // 24-hour x-axis labels: HH:MM within a day-ish span, else "Mon D".
@@ -621,18 +537,6 @@ function wireRange() {
     })));
 }
 
-function wireSpikeWin() {
-  const sel = $("spikeWin");
-  if (!sel) return;
-  sel.value = String(spikeWin);
-  sel.addEventListener("change", () => {
-    spikeWin = Number(sel.value);
-    localStorage.setItem("spikeWin", spikeWin);
-    if (C.chart) C.chart.redraw();     // re-run the badge plugin with the new window
-    if (X.chart) X.chart.redraw();
-  });
-}
-
 function wireForecastModel() {
   const sel = $("forecastModel");
   if (!sel) return;
@@ -965,16 +869,15 @@ function observeSize(elId, getChart) {
 
 window.addEventListener("load", () => {
   C.chart = makeChart("chart", [{ label: "5h", color: "--fh" }, { label: "7d", color: "--sd" }],
-    [spikeMarkers([1], { 1: "--fh" }), nowDivider()]);         // mark 5-hour spikes
+    [nowDivider()]);
   // Codex has no real 5-hour limit (its 5-hour "Spark" window is feature-specific
-  // and usually 0), so hide that series and mark spikes on the 7-day only.
+  // and usually 0), so hide that series.
   X.chart = makeChart("cxChart", [{ label: "primary", color: "--cx1", show: false }, { label: "secondary", color: "--sd" }],
-    [spikeMarkers([2], { 2: "--sd" }), nowDivider()]);   // 7-day teal, matching Claude
+    [nowDivider()]);
   observeSize("chart", () => C.chart);
   observeSize("cxChart", () => X.chart);
   wireControls();
   wireRange();
-  wireSpikeWin();
   wireForecastModel();
   wireUpdate();
   wireCheckUpdate();
