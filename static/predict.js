@@ -90,6 +90,17 @@ function inferResetPeriod(pts) {
   return { P, R: markers[markers.length - 1] };
 }
 
+// Prefer a caller-supplied reset over one guessed from data drops. The API reports
+// the true window length + next reset (Codex reset_at/window_seconds), so when
+// opts.reset = { P, R } is present and valid we project on that grid; otherwise we
+// fall back to inferResetPeriod. R may be any reset instant on the grid (past or
+// future) — the projectors align to R + k·P either way. Units match the samples' t.
+function resolveReset(pts, opts) {
+  const r = opts && opts.reset;
+  if (r && r.P > 0 && Number.isFinite(r.R)) return { P: r.P, R: r.R };
+  return inferResetPeriod(pts);
+}
+
 // Outlier-trimmed mean: treat the values as a normal distribution and, once there
 // are enough of them, drop anything beyond 2σ before averaging. Small samples are
 // averaged as-is. null for an empty input.
@@ -342,7 +353,7 @@ const Predictors = {
     predict(samples, opts = {}) {
       const pts = (samples || []).filter((s) => s && s.y != null);
       const rate = overallRate(pts, opts) ?? 0;   // recency-weighted cross-cycle rate
-      const reset = inferResetPeriod(pts);
+      const reset = resolveReset(pts, opts);
       return reset
         ? projectWithResets(pts, rate, reset.P, reset.R, opts, "cycle")   // drop to 0 at each reset
         : projectFrom(pts, rate, opts, "cycle");                          // not enough cycles → straight line
@@ -357,7 +368,7 @@ const Predictors = {
       const pts = (samples || []).filter((s) => s && s.y != null);
       const model = hourlyRates(pts, opts);
       const hourRate = normalizeHourly(model.hourly, model.overall, opts);   // anchor hour-of-day to the overall rate
-      const reset = inferResetPeriod(pts);
+      const reset = resolveReset(pts, opts);
       const now = opts.now ?? (pts.length ? pts[pts.length - 1].t : 0);
       const recentSlope = recentTrailingSlope(pts, now, opts.recentLookback);
       return projectTOD(pts, hourRate, reset, { ...opts, now, recentSlope }, "cycle+tod");
@@ -368,5 +379,5 @@ const Predictors = {
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly };
+  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset };
 }

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import mod from "./predict.js";
 
-const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly } = mod;
+const { Predictors, segmentCycles, cycleSlopes, robustMean, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset } = mod;
 
 // A climbing cycle 0→10 over 300s starting at t0 (drop of 10 marks the reset).
 const climbCycle = (t0) => [0, 1, 2, 3, 4, 5].map((i) => ({ t: t0 + i * 60, y: i * 2 }));
@@ -320,4 +320,58 @@ test("cycle+tod refills at the overall rate when hour-of-day is sparse (no flat 
   const r = Predictors["cycle+tod"].predict(pts, { now, horizon: 6 * 3600, step: 1800, hourOf: (t) => Math.floor(t / 3600) % 24 });
   const late = r.points.filter((p) => p.t >= now + 3 * 3600);          // past the 2h momentum window
   assert.ok(late[late.length - 1].y - late[0].y > 0, "keeps climbing at the overall rate after momentum fades");
+});
+
+// --- Authoritative reset override (API reset_at/window_seconds) ---------------
+// Codex reports the true window length + next reset; the forecast must project on
+// that period, not one guessed from noisy data drops.
+
+// Data that drops to 0 every 2 days → inferResetPeriod reads a ~2-day period.
+function twoDayDrops() {
+  const pts = [];
+  let y = 0;
+  for (let t = 0; t <= 8 * 86400; t += 3600) {
+    pts.push({ t, y });
+    y += 0.5;
+    if ((t + 3600) % (2 * 86400) === 0) y = 0;   // reset every 2 days
+  }
+  return pts;
+}
+const resetTimes = (points, now) => {
+  const out = [];
+  for (let i = 1; i < points.length; i++)
+    if (points[i].t > now && points[i].y < points[i - 1].y - 20) out.push(points[i].t);
+  return out;
+};
+const gaps = (ts) => ts.slice(1).map((t, i) => t - ts[i]);
+
+test("resolveReset prefers a valid opts.reset over the inferred period", () => {
+  const pts = twoDayDrops();
+  assert.deepEqual(resolveReset(pts, { reset: { P: 604800, R: 100 } }), { P: 604800, R: 100 });
+});
+
+test("resolveReset falls back to inferred when the override is absent/invalid", () => {
+  const pts = twoDayDrops();
+  const inf = resolveReset(pts, {});
+  assert.ok(inf && inf.P < 4 * 86400, "inferred ~2-day period");
+  assert.ok(resolveReset(pts, { reset: { P: 0, R: 5 } }).P < 4 * 86400, "P<=0 override ignored");
+  assert.ok(resolveReset(pts, { reset: null }).P < 4 * 86400, "null override ignored");
+});
+
+test("cycle projects resets on the authoritative period, not the inferred one", () => {
+  const pts = twoDayDrops();
+  const now = pts[pts.length - 1].t;
+  const inferred = Predictors.cycle.predict(pts, { now, horizon: 20 * 86400, step: 3600 });
+  assert.ok(gaps(resetTimes(inferred.points, now)).every((g) => g < 4 * 86400), "inferred = ~2-day drops");
+  const auth = Predictors.cycle.predict(pts, { now, horizon: 25 * 86400, step: 3600, reset: { P: 7 * 86400, R: now } });
+  const g = gaps(resetTimes(auth.points, now));
+  assert.ok(g.length >= 2 && g.every((x) => Math.abs(x - 7 * 86400) < 3600), "override = 7-day resets");
+});
+
+test("cycle+tod projects resets on the authoritative period", () => {
+  const pts = twoDayDrops();
+  const now = pts[pts.length - 1].t;
+  const auth = Predictors["cycle+tod"].predict(pts, { now, horizon: 25 * 86400, step: 3600, reset: { P: 7 * 86400, R: now }, hourOf: (t) => Math.floor(t / 3600) % 24 });
+  const g = gaps(resetTimes(auth.points, now));
+  assert.ok(g.length >= 2 && g.every((x) => Math.abs(x - 7 * 86400) < 3600), "override = 7-day resets");
 });
