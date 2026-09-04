@@ -191,7 +191,7 @@ function applyRange(st) {
     while (i < ts.length && ts[i] < cutoff) i++;
     ts = ts.slice(i); a = a.slice(i); b = b.slice(i);
   }
-  st.chart.setData(withProjection(ts, a, b));
+  st.chart.setData(withProjection(ts, a, b, panelResets(st)));
 }
 
 function toSamples(ts, ys) {
@@ -204,10 +204,37 @@ function lastNonNull(arr) {
   return 0;
 }
 
+// Authoritative reset override for the predictor: { P, R } in seconds (window
+// length + a known reset instant), taken from the API's window info so the forecast
+// projects resets on the real cadence instead of guessing from noisy data drops.
+function resetOverride(iso, winSec) {
+  if (!iso || !(winSec > 0)) return null;
+  const R = new Date(iso).getTime() / 1000;
+  return Number.isFinite(R) ? { P: winSec, R } : null;
+}
+// Per-panel {a, b} reset overrides for the two charted series (a = 5-hour, b = 7-day).
+function panelResets(st) {
+  if (st === C) return {
+    a: resetOverride(C.resets.five_hour, 5 * 3600),
+    b: resetOverride(C.resets.seven_day, 7 * 86400),
+  };
+  if (st === X) {
+    const wins = (X.last && X.last.windows) || [];
+    const byLen = (target, tol) => wins.find((w) => w.window_seconds && Math.abs(w.window_seconds - target) <= tol);
+    const w5 = byLen(18000, 900), w7 = byLen(604800, 7200);
+    return {
+      a: w5 && resetOverride(w5.reset_at, w5.window_seconds),
+      b: w7 && resetOverride(w7.reset_at, w7.window_seconds),
+    };
+  }
+  return { a: null, b: null };
+}
+
 // Expand [ts, a, b] into uPlot's 5-row data with a forecast filling the rightmost
 // 25%: [ts, a, b, aProj, bProj]. Real lines go null in the future; projection lines
 // are null across history except an anchor at the last real point so they connect.
-function withProjection(ts, a, b) {
+// `rst` carries authoritative {a, b} reset overrides (see panelResets).
+function withProjection(ts, a, b, rst) {
   const n = ts.length;
   const noProj = [ts.slice(), a.slice(), b.slice(), a.map(() => null), b.map(() => null)];
   if (n < 2) return noProj;
@@ -216,14 +243,14 @@ function withProjection(ts, a, b) {
   if (!(horizon > 0)) return noProj;
   const step = Math.max(horizon / 24, 60);
   const P = Predictors[forecastModel] || Predictors.linear;
-  const projA = P.predict(toSamples(ts, a), { now, horizon, step }).points;
+  const projA = P.predict(toSamples(ts, a), { now, horizon, step, reset: rst && rst.a }).points;
   // Derive the 7-day (b) from the 5-hour (a) projection when they're linked by a
   // stable consumption ratio; otherwise forecast it independently (e.g. Codex, whose
   // 5-hour "Spark" window sits at ~0 → no ratio → falls back here).
   const ratio = consumptionRatio(a, b);
   const projB = ratio != null
     ? deriveSeries(projA, lastNonNull(b), ratio, 100)
-    : P.predict(toSamples(ts, b), { now, horizon, step }).points;
+    : P.predict(toSamples(ts, b), { now, horizon, step, reset: rst && rst.b }).points;
   // The two series can project on different time grids (e.g. one line hits resets
   // and the other doesn't), so build a shared future axis from both and resample
   // each onto it — otherwise the sparser series' projection ends up short and cut off.
@@ -435,9 +462,6 @@ function renderClaude(s) {
   $("sdFill").style.width = (s.sd ?? 0) + "%";
   $("fhPct").textContent = fmtPct(s.fh);
   $("sdPct").textContent = fmtPct(s.sd);
-  $("mOpus").textContent = fmtPct(s.so);
-  $("mSonnet").textContent = fmtPct(s.sn);
-  $("mCredits").textContent = s.credits == null ? "–" : "$" + Number(s.credits).toFixed(2);
   renderScoped(s.limits);
   renderClaudeResets();
   renderClaudeForecast();
@@ -515,11 +539,8 @@ function renderCodex(s) {
     .filter((slot) => wins.some((w) => w.label === slot.label))
     .map((slot) => `<span class="lg"><i class="swatch ${slot.cls}"></i>${slot.label}</span>`).join("");
 
-  $("cxPlan").textContent = s.plan_type || "–";
-  const cr = s.credits || {};
-  $("cxCredits").textContent = cr.unlimited ? "∞" : (cr.balance == null ? "–" : "$" + Number(cr.balance).toFixed(2));
-
-  const add = (s.additional || []).filter((a) => a.used_percent != null);
+  // Hide the model-specific "Spark" feature limit — it's usually 0% and not a real cap.
+  const add = (s.additional || []).filter((a) => a.used_percent != null && !/spark/i.test(a.label || ""));
   $("cxScoped").innerHTML = add.map((a) =>
     `<div class="row"><span>${a.label}</span><b>${Math.round(a.used_percent)}%</b></div>`).join("");
 
