@@ -335,6 +335,147 @@ function projectTOD(pts, hourRate, reset, opts, method) {
   return { method, points };
 }
 
+// ---- cone: block-bootstrap probabilistic forecast --------------------------
+// Instead of one line, simulate many futures and report a band (p10/p50/p90).
+// Each sim replays a whole historical cycle's hourly rate-profile (block
+// bootstrap) so it inherits real within-cycle autocorrelation — sprints and
+// idles — which an independent-per-hour sample would average away.
+
+// Seeded PRNG (mulberry32) so the band is stable across redraws/resizes.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// One point per clock-hour bucket (the hour's last value).
+function resampleHourly(pts) {
+  const clean = (pts || []).filter((s) => s && s.y != null);
+  if (!clean.length) return [];
+  const out = [];
+  let bucket = null, cur = null;
+  for (const p of clean) {
+    const b = Math.floor(p.t / 3600);
+    if (bucket === null) bucket = b;
+    if (b !== bucket) { out.push({ t: bucket * 3600, y: cur.y }); bucket = b; }
+    cur = p;
+  }
+  out.push({ t: bucket * 3600, y: cur.y });
+  return out;
+}
+
+// Each historical cycle as [{ rates:[%/h per hour], w:recencyWeight }].
+function cycleProfiles(pts, now, halfLife) {
+  const profs = [];
+  for (const cyc of segmentCycles(resampleHourly(pts))) {
+    const rates = [];
+    for (let i = 1; i < cyc.length; i++) {
+      const dtH = (cyc[i].t - cyc[i - 1].t) / 3600;
+      if (dtH > 0) rates.push(Math.max(0, cyc[i].y - cyc[i - 1].y) / dtH);
+    }
+    if (rates.length) profs.push({ rates, w: recencyWeight(cyc[0].t, now, halfLife) });
+  }
+  return profs;
+}
+
+function weightedPick(rng, items, weights) {
+  let tot = 0;
+  for (const w of weights) tot += w;
+  if (tot <= 0) return items.length ? items[Math.floor(rng() * items.length)] : null;
+  let x = rng() * tot;
+  for (let i = 0; i < items.length; i++) { x -= weights[i]; if (x <= 0) return items[i]; }
+  return items[items.length - 1];
+}
+
+function coneForecast(pts, opts = {}) {
+  const clean = (pts || []).filter((s) => s && s.y != null);
+  const now = opts.now ?? (clean.length ? clean[clean.length - 1].t : 0);
+  const horizon = opts.horizon ?? 0;
+  const cap = opts.cap ?? 100;
+  const nSims = opts.coneSims ?? 200;
+  const qs = opts.quantiles ?? [0.1, 0.5, 0.9];
+  const halfLife = opts.halfLife ?? HALF_LIFE;
+  const reset = resolveReset(clean, opts);
+  const yLast = clean.length ? clean[clean.length - 1].y : 0;
+  const step = Math.max(3600, Math.min(opts.step ?? 3600, 3600));   // hourly steps
+  const profs = cycleProfiles(clean, now, halfLife);
+  const profWs = profs.map((p) => p.w);
+  const hasReset = !!(reset && reset.P > 0);
+  const P = hasReset ? reset.P : 0, R = hasReset ? reset.R : 0;
+
+  // Reset times are deterministic (same for every sim), so put them on a shared
+  // grid and every sim drops at the same indices — keeps trajectories aligned.
+  const resets = [];
+  if (hasReset) {
+    const csNow = R + Math.floor((now - R) / P) * P;
+    for (let r = csNow + P; r <= now + horizon + 1e-9; r += P) resets.push(r);
+  }
+  const eps = 1;
+  const tset = new Set();
+  for (let t = now; t <= now + horizon + 1e-6; t += step) tset.add(t);
+  tset.add(now + horizon);
+  for (const r of resets) { tset.add(r - eps); tset.add(r); }
+  const grid = [...tset].sort((a, b) => a - b);
+  const isReset = (t) => resets.some((r) => Math.abs(t - r) < 1e-6);
+  const cycStart = (t) => (hasReset ? R + Math.floor((t - R) / P) * P : now);
+
+  const baseSeed = (opts.seed ?? 1) >>> 0;
+  const sims = [];
+  for (let s = 0; s < nSims; s++) {
+    // Reseed per simulation so a sim's draw sequence — and thus the band at any
+    // given time — is independent of the horizon length (stable across ranges).
+    const rng = mulberry32((baseSeed + s * 2654435761) >>> 0);
+    const traj = new Array(grid.length);
+    let y = Math.max(0, Math.min(cap, yLast));
+    traj[0] = y;
+    let curCyc = cycStart(grid[0]);
+    let prof = profs.length ? weightedPick(rng, profs, profWs) : null;
+    for (let i = 1; i < grid.length; i++) {
+      const t0 = grid[i - 1], t1 = grid[i];
+      if (isReset(t1)) { y = 0; traj[i] = 0; curCyc = cycStart(t1); prof = profs.length ? weightedPick(rng, profs, profWs) : null; continue; }
+      const cs = cycStart(t1);
+      if (cs !== curCyc) { curCyc = cs; prof = profs.length ? weightedPick(rng, profs, profWs) : null; }
+      const h = Math.floor((t0 - cs) / 3600);
+      const rate = (prof && h >= 0 && h < prof.rates.length) ? prof.rates[h] : 0;
+      y = Math.max(0, Math.min(cap, y + rate * ((t1 - t0) / 3600)));
+      traj[i] = y;
+    }
+    sims.push(traj);
+  }
+
+  const out = {};
+  for (const q of qs) out[q] = [];
+  for (let i = 0; i < grid.length; i++) {
+    const col = sims.map((s) => s[i]).sort((a, b) => a - b);
+    for (const q of qs) {
+      const idx = col.length ? Math.min(col.length - 1, Math.round(q * (col.length - 1))) : 0;
+      out[q].push({ t: grid[i], y: col.length ? col[idx] : 0 });
+    }
+  }
+  return { points: out[0.5] || [], lo: out[qs[0]], hi: out[qs[qs.length - 1]] };
+}
+
+// Turn a point forecast into a distribution: keep `line` as the central estimate
+// and wrap it in an uncertainty band whose width is the block-bootstrap spread
+// (p10..p90). The band is asymmetric and centered on the line, so the point
+// forecast always sits inside it. Returns { lo, hi } aligned to `line`.
+function distributionBand(pts, line, opts = {}) {
+  const c = coneForecast(pts, opts);
+  const lo = [], hi = [];
+  for (const p of line) {
+    const med = sampleAt(c.points, p.t);
+    const down = Math.max(0, med - sampleAt(c.lo, p.t));
+    const up = Math.max(0, sampleAt(c.hi, p.t) - med);
+    lo.push({ t: p.t, y: Math.max(0, p.y - down) });
+    hi.push({ t: p.t, y: Math.min(opts.cap ?? 100, p.y + up) });
+  }
+  return { lo, hi };
+}
+
 const Predictors = {
   // Simple linear regression over all samples.
   linear: {
@@ -362,6 +503,8 @@ const Predictors = {
 
   // Cycle + time of day: reset-aware, but the forward rate varies by hour-of-day
   // (per-hour robust average, falling back to the overall cycle rate for sparse hours).
+  // Returns a *distribution*: the point forecast plus an uncertainty band (lo/hi)
+  // whose width comes from a block bootstrap over past cycles.
   "cycle+tod": {
     method: "cycle+tod",
     predict(samples, opts = {}) {
@@ -371,7 +514,9 @@ const Predictors = {
       const reset = resolveReset(pts, opts);
       const now = opts.now ?? (pts.length ? pts[pts.length - 1].t : 0);
       const recentSlope = recentTrailingSlope(pts, now, opts.recentLookback);
-      return projectTOD(pts, hourRate, reset, { ...opts, now, recentSlope }, "cycle+tod");
+      const r = projectTOD(pts, hourRate, reset, { ...opts, now, recentSlope }, "cycle+tod");
+      const band = distributionBand(pts, r.points, opts);
+      return { ...r, lo: band.lo, hi: band.hi };
     },
   },
 };
@@ -379,5 +524,5 @@ const Predictors = {
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset };
+  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset, coneForecast, resampleHourly, cycleProfiles, distributionBand };
 }

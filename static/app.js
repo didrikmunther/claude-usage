@@ -39,7 +39,16 @@ function makeChart(elId, series, plugins) {
   const el = $(elId);
   const real = series.map((s) => ({ label: s.label, stroke: css(s.color), width: 2, points: { show: false }, show: s.show !== false }));
   // One projection twin per line: lighter + dashed, drawn in the future region.
+  // (For the cone model this row carries the median; the band is filled below.)
   const proj = series.map((s) => ({ label: s.label + " ·proj", stroke: css(s.color + "-dim"), width: 2, dash: [4, 4], points: { show: false }, show: s.show !== false }));
+  // Invisible lo/hi twins that only exist so the cone's p10-p90 band can fill
+  // between them; empty unless the cone model is active.
+  const lo = series.map((s) => ({ label: s.label + " ·lo", stroke: "transparent", width: 0, points: { show: false }, show: s.show !== false }));
+  const hi = series.map((s) => ({ label: s.label + " ·hi", stroke: "transparent", width: 0, points: { show: false }, show: s.show !== false }));
+  const N = series.length;
+  const bands = series
+    .map((s, i) => ({ series: [1 + 3 * N + i, 1 + 2 * N + i], fill: css(s.color + "-band") }))
+    .filter((_, i) => series[i].show !== false);
   const opts = {
     width: el.clientWidth || 640, height: 240,
     padding: [8, 8, 0, 0],
@@ -53,9 +62,10 @@ function makeChart(elId, series, plugins) {
       { grid: { stroke: css("--line"), width: 1 }, ticks: { show: false },
         size: 38, values: (u, vs) => vs.map((v) => v + "%"), stroke: css("--muted") },
     ],
-    series: [{}, ...real, ...proj],
+    series: [{}, ...real, ...proj, ...lo, ...hi],
+    bands,
   };
-  const empty = [[], ...real.map(() => []), ...proj.map(() => [])];
+  const empty = [[], ...real.map(() => []), ...proj.map(() => []), ...lo.map(() => []), ...hi.map(() => [])];
   return new uPlot(opts, empty, el);
 }
 
@@ -101,13 +111,7 @@ function applyRange(st) {
   if (!st.chart) return;
   const secs = RANGES[range];
   let ts = st.data[0], a = st.data[1], b = st.data[2];
-  if (secs !== Infinity && ts.length) {
-    const cutoff = ts[ts.length - 1] - secs;
-    let i = 0;
-    while (i < ts.length && ts[i] < cutoff) i++;
-    ts = ts.slice(i); a = a.slice(i); b = b.slice(i);
-  }
-  st.chart.setData(withProjection(ts, a, b, panelResets(st)));
+  st.chart.setData(withProjection(ts, a, b, panelResets(st), secs));
 }
 
 function toSamples(ts, ys) {
@@ -149,39 +153,68 @@ function panelResets(st) {
 // Expand [ts, a, b] into uPlot's 5-row data with a forecast filling the rightmost
 // 25%: [ts, a, b, aProj, bProj]. Real lines go null in the future; projection lines
 // are null across history except an anchor at the last real point so they connect.
-// `rst` carries authoritative {a, b} reset overrides (see panelResets).
-function withProjection(ts, a, b, rst) {
+// `rst` carries authoritative {a, b} reset overrides (see panelResets). `rangeSecs`
+// is the visible window (Infinity = full). The model always trains on the FULL
+// history — the range only controls how much history is shown and how far ahead
+// the forecast is drawn — so the prediction is stable across range switches.
+function withProjection(tsFull, aFull, bFull, rst, rangeSecs) {
+  const nFull = tsFull.length;
+  const now = nFull ? tsFull[nFull - 1] : 0;
+  // Slice for DISPLAY only.
+  let start = 0;
+  if (rangeSecs !== Infinity && nFull) {
+    const cutoff = now - rangeSecs;
+    while (start < nFull && tsFull[start] < cutoff) start++;
+  }
+  const ts = tsFull.slice(start), a = aFull.slice(start), b = bFull.slice(start);
   const n = ts.length;
-  const noProj = [ts.slice(), a.slice(), b.slice(), a.map(() => null), b.map(() => null)];
-  if (n < 2) return noProj;
-  const now = ts[n - 1];
-  const horizon = (ts[n - 1] - ts[0]) / 3;   // future region = 25% of the total width
+  const nul = () => ts.map(() => null);
+  // rows: ts, realA, realB, projA, projB, loA, loB, hiA, hiB
+  const noProj = [ts.slice(), a.slice(), b.slice(), nul(), nul(), nul(), nul(), nul(), nul()];
+  if (nFull < 2 || n < 1) return noProj;
+  const horizon = (now - ts[0]) / 3;   // future region = 25% of the visible width
   if (!(horizon > 0)) return noProj;
-  const step = Math.max(horizon / 24, 60);
+  // Fixed hourly step (not tied to the range) so the forecast resolution — and
+  // thus the overlapping trajectory — is identical whatever range is selected.
+  const step = 3600;
   const P = Predictors[forecastModel] || Predictors.linear;
-  const projA = P.predict(toSamples(ts, a), { now, horizon, step, reset: rst && rst.a }).points;
-  // Derive the 7-day (b) from the 5-hour (a) projection when they're linked by a
-  // stable consumption ratio; otherwise forecast it independently (e.g. Codex, whose
-  // 5-hour "Spark" window sits at ~0 → no ratio → falls back here).
-  const ratio = consumptionRatio(a, b);
-  const projB = ratio != null
-    ? deriveSeries(projA, lastNonNull(b), ratio, 100)
-    : P.predict(toSamples(ts, b), { now, horizon, step, reset: rst && rst.b }).points;
-  // The two series can project on different time grids (e.g. one line hits resets
-  // and the other doesn't), so build a shared future axis from both and resample
-  // each onto it — otherwise the sparser series' projection ends up short and cut off.
+
+  const rA = P.predict(toSamples(tsFull, aFull), { now, horizon, step, reset: rst && rst.a });
+  const projA = rA.points, loA = rA.lo || null, hiA = rA.hi || null;
+  let projB, loB = null, hiB = null;
+  const ratio = consumptionRatio(aFull, bFull);
+  if (ratio != null && !rA.lo) {
+    // Point-only models: derive the 7-day (b) from the 5-hour (a) projection when
+    // linked by a stable consumption ratio.
+    projB = deriveSeries(projA, lastNonNull(bFull), ratio, 100);
+  } else {
+    // Model returns a distribution (or no ratio): forecast b independently so it
+    // gets its own point line + uncertainty band.
+    const rB = P.predict(toSamples(tsFull, bFull), { now, horizon, step, reset: rst && rst.b });
+    projB = rB.points; loB = rB.lo || null; hiB = rB.hi || null;
+  }
+
+  // Shared future axis from every present series, so nothing is cut short.
   const ftSet = new Set();
-  for (const p of projA) if (p.t > now) ftSet.add(p.t);
-  for (const p of projB) if (p.t > now) ftSet.add(p.t);
+  for (const arr of [projA, projB, loA, hiA, loB, hiB]) {
+    if (arr) for (const p of arr) if (p.t > now) ftSet.add(p.t);
+  }
   const future = [...ftSet].sort((x, y) => x - y);
   const outTs = ts.concat(future);
   const outA = a.concat(future.map(() => null));
   const outB = b.concat(future.map(() => null));
-  const outAp = ts.map(() => null), outBp = ts.map(() => null);
-  if (projA.length) outAp[n - 1] = projA[0].y;      // anchor to the last real point
-  if (projB.length) outBp[n - 1] = projB[0].y;
-  for (const t of future) { outAp.push(sampleAt(projA, t)); outBp.push(sampleAt(projB, t)); }
-  return [outTs, outA, outB, outAp, outBp];
+  // Each projection/band row: null across history, anchored at the last real
+  // point, then resampled onto the shared future axis. null arr → empty row.
+  const mkRow = (arr) => {
+    const row = ts.map(() => null);
+    if (arr && arr.length) row[n - 1] = arr[0].y;
+    for (const t of future) row.push(arr ? sampleAt(arr, t) : null);
+    return row;
+  };
+  return [outTs, outA, outB,
+    mkRow(projA), mkRow(projB),
+    mkRow(loA), mkRow(loB),
+    mkRow(hiA), mkRow(hiB)];
 }
 function applyRangeAll() { applyRange(C); applyRange(X); renderConsumed(); }
 

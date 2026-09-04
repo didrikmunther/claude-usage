@@ -375,3 +375,70 @@ test("cycle+tod projects resets on the authoritative period", () => {
   const g = gaps(resetTimes(auth.points, now));
   assert.ok(g.length >= 2 && g.every((x) => Math.abs(x - 7 * 86400) < 3600), "override = 7-day resets");
 });
+
+// --- cone predictor (block-bootstrap probabilistic band) --------------------
+
+const { coneForecast, resampleHourly } = mod;
+
+function climbSeries(days) {
+  // Daily cycle: climb for 12h then idle 12h, reset each day. The climb rate
+  // varies day-to-day so historical cycles genuinely differ (gives the cone width).
+  const pts = [];
+  let y = 0;
+  for (let h = 0; h < days * 24; h++) {
+    const day = Math.floor(h / 24);
+    const hod = h % 24;
+    if (hod === 0) y = 0;                       // daily reset
+    else if (hod < 12) y += 1 + (day % 4);      // day-to-day variability
+    pts.push({ t: h * 3600, y: Math.min(100, y) });
+  }
+  return pts;
+}
+
+test("resampleHourly keeps one point per hour", () => {
+  const pts = [{ t: 0, y: 1 }, { t: 600, y: 2 }, { t: 3600, y: 5 }, { t: 7200, y: 9 }];
+  assert.deepEqual(resampleHourly(pts), [{ t: 0, y: 2 }, { t: 3600, y: 5 }, { t: 7200, y: 9 }]);
+});
+
+test("coneForecast returns an ordered band anchored at the last value", () => {
+  const pts = climbSeries(6);
+  const now = pts[pts.length - 1].t;
+  const r = coneForecast(pts, {
+    now, horizon: 24 * 3600, step: 3600, reset: { P: 24 * 3600, R: now },
+    coneSims: 150, seed: 1,
+  });
+  assert.ok(r.lo.length && r.points.length && r.hi.length);
+  assert.equal(Math.round(r.points[0].y), Math.round(pts[pts.length - 1].y));   // anchored
+  for (let i = 0; i < r.points.length; i++) {
+    assert.ok(r.lo[i].y <= r.points[i].y + 1e-9, "p10 <= p50");
+    assert.ok(r.points[i].y <= r.hi[i].y + 1e-9, "p50 <= p90");
+    assert.ok(r.lo[i].y >= 0 && r.hi[i].y <= 100, "within [0,100]");
+  }
+  // The band has real width somewhere in the future (it is not a single line).
+  assert.ok(r.hi.some((p, i) => p.y - r.lo[i].y > 1), "band has width");
+});
+
+test("coneForecast is deterministic for a given seed", () => {
+  const pts = climbSeries(6);
+  const now = pts[pts.length - 1].t;
+  const opts = { now, horizon: 12 * 3600, step: 3600, reset: { P: 24 * 3600, R: now }, coneSims: 80, seed: 7 };
+  assert.deepEqual(coneForecast(pts, opts).hi, coneForecast(pts, opts).hi);
+  assert.deepEqual(coneForecast(pts, opts).lo, coneForecast(pts, opts).lo);
+});
+
+test("cycle+tod returns a distribution band around its line", () => {
+  const pts = climbSeries(6);
+  const now = pts[pts.length - 1].t;
+  const r = Predictors["cycle+tod"].predict(pts, {
+    now, horizon: 24 * 3600, step: 3600, reset: { P: 24 * 3600, R: now },
+    coneSims: 120, seed: 1, hourOf: (t) => Math.floor(t / 3600) % 24,
+  });
+  assert.equal(r.method, "cycle+tod");
+  assert.ok(r.lo.length === r.points.length && r.hi.length === r.points.length, "band aligned to line");
+  for (let i = 0; i < r.points.length; i++) {
+    assert.ok(r.lo[i].y <= r.points[i].y + 1e-9, "lo <= line (point stays inside band)");
+    assert.ok(r.points[i].y <= r.hi[i].y + 1e-9, "line <= hi");
+    assert.ok(r.lo[i].y >= 0 && r.hi[i].y <= 100, "within [0,100]");
+  }
+  assert.ok(r.hi.some((p, i) => p.y - r.lo[i].y > 1), "band has width");
+});
