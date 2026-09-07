@@ -342,6 +342,12 @@ async def index():
     return FileResponse(os.path.join(STATIC, "index.html"))
 
 
+@app.get("/widget")
+async def widget():
+    """The floating HUD (menubar.py hosts this in an always-on-top panel)."""
+    return FileResponse(os.path.join(STATIC, "widget.html"))
+
+
 @app.get("/api/latest")
 async def api_latest():
     return JSONResponse({"latest": hub.latest, "claude": hub.latest,

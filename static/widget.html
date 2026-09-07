@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Usage widget</title>
+<style>
+  /* A floating HUD, not a page: no scrolling, no chrome, and a translucent card
+     that stays legible over whatever window it happens to be sitting on. The
+     native panel is transparent, so these rounded corners are the real edges. */
+  :root {
+    --bg: rgba(252, 252, 253, 0.80);
+    --line: rgba(0, 0, 0, 0.10);
+    --fg: #1c1c1e;
+    --muted: #6b6b70;
+    --ok: #15803d;
+    --warn: #b42318;
+    --grip: rgba(0, 0, 0, 0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: rgba(28, 28, 30, 0.78);
+      --line: rgba(255, 255, 255, 0.12);
+      --fg: #f2f2f7;
+      --muted: #9a9aa0;
+      --ok: #4ade80;
+      --warn: #fca5a5;
+      --grip: rgba(255, 255, 255, 0.22);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    font: 12px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: var(--fg);
+    -webkit-user-select: none; user-select: none;
+    cursor: default;
+  }
+  /* GRIP_H (18px) of clear space up top for the grip. A transparent native
+     overlay covers the whole panel, so it drags from anywhere.
+     Height is intentionally auto — the page measures itself and asks the native
+     panel to shrink to fit, so there is never dead space below the last row. */
+  #card {
+    height: auto;
+    background: var(--bg);
+    /* Blurred so whatever is behind never competes with the forecast text. */
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%);
+    border: 0.5px solid var(--line);
+    border-radius: 12px;
+    /* Nearly invisible at rest, solid the moment you point at it. The whole
+       card fades (text included) rather than just the fill, so at rest it reads
+       as a ghost rather than as washed-out, unreadable text.
+       `.hover` is set natively — the drag overlay eats mouse events, so the
+       page never sees CSS :hover (see widget_panel.DragOverlay). */
+    opacity: 0.22;
+    transition: opacity 140ms ease-out;
+    padding: 18px 11px 9px;
+    overflow: hidden;
+  }
+  .src {
+    font-size: 9.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); margin: 3px 0 2px;
+  }
+  .src:first-child { margin-top: 0; }
+  .row { display: flex; align-items: baseline; gap: 7px; padding: 1px 0; }
+  .label { flex: 0 0 46px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .msg {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .ok .msg { color: var(--ok); }
+  .warn .msg { color: var(--warn); }
+  .muted .msg { color: var(--muted); }
+  html.hover #card { opacity: 1; }
+  #empty { color: var(--muted); padding-top: 2px; }
+  /* Painted by the page so it lines up with the card, but the strip that
+     actually receives the drag is a native view above it. */
+  #grip {
+    position: fixed; top: 6px; left: 50%; transform: translateX(-50%);
+    width: 26px; height: 3px; border-radius: 2px; background: var(--grip);
+    opacity: 0.22;
+    transition: opacity 140ms ease-out;
+  }
+  html.hover #grip { opacity: 1; }
+</style>
+</head>
+<body>
+  <div id="grip"></div>
+  <div id="card"><div id="empty">connecting…</div></div>
+  <script src="/static/forecast.js"></script>
+  <script src="/static/widget.js"></script>
+</body>
+</html>

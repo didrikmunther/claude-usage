@@ -26,6 +26,7 @@ from Foundation import NSObject, NSURL, NSURLRequest, NSAttributedString, NSUser
 from WebKit import WKWebView, WKWebViewConfiguration
 
 from menubar_fmt import lines_for
+from widget_panel import WidgetPanel
 
 PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "44405"))
 BASE = f"http://127.0.0.1:{PORT}"
@@ -118,6 +119,8 @@ class AppDelegate(NSObject):
         # Dedicated suite (own plist, not the shared org.python.python domain).
         self._defaults = NSUserDefaults.alloc().initWithSuiteName_("com.claude-usage")
         self._zen = self._defaults.boolForKey_("zenMode")
+        self._widget_on = self._defaults.boolForKey_("widgetShown")
+        self.widget = WidgetPanel.alloc().initWithDefaults_(self._defaults)
         self.statusItem = bar.statusItemWithLength_(NSVariableStatusItemLength)
         btn = self.statusItem.button()
         btn.setTitle_("…")
@@ -156,13 +159,19 @@ class AppDelegate(NSObject):
 
         mkbtn("↻ Reload", 8, 92, "reload:")
         mkbtn("Open in browser", 104, 150, "openBrowser:")
-        zen = NSButton.checkboxWithTitle_target_action_("Zen", self, "toggleZen:")
-        zen.setFont_(NSFont.systemFontOfSize_(12))
-        zen.sizeToFit()
-        zsz = zen.frame().size
-        zen.setFrameOrigin_(NSMakePoint((POPW - zsz.width) / 2, (HEADER_H - zsz.height) / 2))
-        zen.setState_(1 if self._zen else 0)
-        header.addSubview_(zen)
+        def mkcheck(title, action, on, x_shift):
+            c = NSButton.checkboxWithTitle_target_action_(title, self, action)
+            c.setFont_(NSFont.systemFontOfSize_(12))
+            c.sizeToFit()
+            sz = c.frame().size
+            c.setFrameOrigin_(NSMakePoint((POPW - sz.width) / 2 + x_shift,
+                                          (HEADER_H - sz.height) / 2))
+            c.setState_(1 if on else 0)
+            header.addSubview_(c)
+            return c
+
+        mkcheck("Zen", "toggleZen:", self._zen, -46)
+        mkcheck("Widget", "toggleWidget:", self._widget_on, 30)
         mkbtn("Quit", POPW - 70, 62, "quit:")
         container.addSubview_(header)
 
@@ -174,6 +183,9 @@ class AppDelegate(NSObject):
         self.popover.setBehavior_(NSPopoverBehaviorTransient)
         self.popover.setContentViewController_(vc)
         self._loadDashboard()
+
+        if self._widget_on:
+            self.widget.show()               # reopen where it was last left
 
         # --- title refresh loop ---
         self.refresh_(None)
@@ -227,6 +239,12 @@ class AppDelegate(NSObject):
 
     def quit_(self, _sender):
         NSApp.terminate_(None)
+
+    def toggleWidget_(self, sender):
+        self._widget_on = sender.state() != 0
+        self._defaults.setBool_forKey_(self._widget_on, "widgetShown")
+        self._defaults.synchronize()
+        self.widget.show() if self._widget_on else self.widget.hide()
 
     def toggleZen_(self, sender):
         self._zen = sender.state() != 0
