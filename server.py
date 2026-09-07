@@ -167,7 +167,21 @@ class Hub:
 
     async def loop(self):
         while True:
-            await self._poll_once()
+            try:
+                await self._poll_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                # Last line of defence: no single poll may kill this loop. When
+                # it died, the dashboard kept loading and kept looking healthy
+                # while its data silently stopped advancing.
+                self._fail_streak += 1
+                self.status = {"state": "error", "message": self._errmsg("poll", e),
+                               "ts": poller.now_ms()}
+                try:
+                    await self.broadcast({"type": "status", "status": self.status})
+                except Exception:
+                    pass
             wait = self.interval
             if self._fail_streak:
                 wait = min(MAX_INTERVAL, self.interval * (2 ** min(self._fail_streak, 5)))
@@ -256,8 +270,18 @@ class Hub:
                 errs.append(self._errmsg("Codex", e))
 
         row["ts"] = ts                            # single timestamp for the combined row
+        stored = False
         if claude_live or codex_live:
-            self.store.insert(row)
+            try:
+                self.store.insert(row)
+                stored = True
+            except Exception as e:
+                # A storage failure must not escape. It used to propagate out of
+                # Hub.loop and stop sampling for good, while the server went on
+                # serving the frozen history as if it were current.
+                errs.append(self._errmsg("store", e))
+
+        if stored:
             if claude_live:
                 self.latest = claude_live
             if codex_live:

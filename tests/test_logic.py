@@ -125,3 +125,81 @@ def test_is_newer():
     assert is_newer(None, "1.0.0") is False        # nothing remote
     assert is_newer("v1.0.0", None) is True        # unknown local -> update
     assert is_newer("v0.10.0", "0.9.0") is True    # numeric compare
+
+
+# ---- poll-loop resilience -------------------------------------------------
+# A single SQLite write error once escaped _poll_once, propagated out of
+# Hub.loop's `while True`, and killed the poll task outright. The web server
+# kept serving, so the dashboard showed a frozen dataset for 41 hours with no
+# warning. Both layers must now survive a failing poll.
+
+
+class _StopLoop(BaseException):
+    """Escapes `except Exception`, so the infinite poll loop can be ended."""
+
+
+def _bare_hub():
+    """A Hub carrying only the attributes the poll path touches — no Keychain,
+    no network, no SQLite."""
+    import concurrent.futures
+    from server import Hub
+    hub = Hub.__new__(Hub)
+    hub.claude_src = "desktop"
+    hub.store = None
+    hub.interval = 0
+    hub.latest = hub.codex_latest = None
+    hub.codex_available = hub.cc_available = hub.xcost_available = False
+    hub.status = {"state": "starting", "message": None, "ts": None}
+    hub.clients = set()
+    hub._fail_streak = 0
+    hub._claude_next = 0.0
+    hub._claude_streak = 0
+    hub._update_next = float("inf")     # don't reach for the release feed
+    hub._pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    return hub
+
+
+def test_poll_once_survives_store_failure():
+    import asyncio
+    import sqlite3
+
+    hub = _bare_hub()
+    hub._fetch_claude = lambda ts: ({"ts": ts, "fh": 1.0}, {"resets": {}})
+
+    class _Boom:
+        def insert(self, row):
+            raise sqlite3.OperationalError("unable to open database file")
+
+    hub.store = _Boom()
+    asyncio.run(hub._poll_once())                  # must not raise
+    assert hub.status["state"] == "error"
+    assert "database" in hub.status["message"]
+    assert hub._fail_streak == 1
+    assert hub.latest is None                      # nothing persisted, nothing claimed
+
+
+def test_loop_keeps_polling_after_a_failure():
+    import asyncio
+    import pytest
+
+    hub = _bare_hub()
+    calls = []
+
+    async def flaky():
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise RuntimeError("unable to open database file")
+        if len(calls) >= 3:
+            raise _StopLoop
+
+    hub._poll_once = flaky
+
+    async def drive():
+        hub._wake = asyncio.Event()
+        with pytest.raises(_StopLoop):
+            await hub.loop()
+
+    asyncio.run(drive())
+    assert len(calls) == 3                         # kept going past the failure
+    assert hub.status["state"] == "error"
+    assert "database" in hub.status["message"]

@@ -878,7 +878,46 @@ function updateGauges() {
   }
 }
 
+// ---- staleness ----
+// The chart anchors "now" to the newest sample (see withProjection), so when the
+// poller stops the whole view just freezes at an old timestamp and still reads
+// as live. Compare the newest sample against the wall clock and say so.
+const STALE_MISSED_POLLS = 5;   // tolerate a few missed polls before crying wolf
+const STALE_FLOOR_SEC = 300;    // ...but never warn about less than 5 minutes
+
+function newestSampleMs() {
+  let newest = 0;
+  for (const st of [C, X]) {
+    const ts = st.data && st.data[0];
+    if (ts && ts.length) newest = Math.max(newest, ts[ts.length - 1] * 1000);
+  }
+  return newest || null;
+}
+
+function checkStale() {
+  const el = $("stale");
+  if (!el) return;
+  const newest = newestSampleMs();
+  if (!newest) { el.hidden = true; return; }
+  const poll = Number($("ivalNum") && $("ivalNum").value) || 60;
+  const limit = Math.max(STALE_FLOOR_SEC, poll * STALE_MISSED_POLLS) * 1000;
+  const age = Date.now() - newest;
+  el.hidden = age <= limit;
+  if (el.hidden) return;
+  // fmtClock is for upcoming resets and drops the day for anything "soon";
+  // a stale edge is in the past, so spell out the day once it's not today.
+  const d = new Date(newest);
+  const when = age > 12 * 3600e3
+    ? d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false })
+    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  el.textContent =
+    `No new samples for ${fmtDur(age / 1000)} — the chart below ends at ` +
+    `${when} and is not current.`;
+  setDots("err");
+}
+
 function tick() {
+  checkStale();
   renderClaudeResets();
   renderClaudeForecast();
   document.querySelectorAll("#cxBars [data-reset]").forEach((el) => {
