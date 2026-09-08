@@ -2,92 +2,87 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Usage widget</title>
+<title>Usage pill</title>
 <style>
-  /* A floating HUD, not a page: no scrolling, no chrome, and a translucent card
-     that stays legible over whatever window it happens to be sitting on. The
-     native panel is transparent, so these rounded corners are the real edges. */
-  :root {
-    --bg: rgba(252, 252, 253, 0.80);
-    --line: rgba(0, 0, 0, 0.10);
-    --fg: #1c1c1e;
-    --muted: #6b6b70;
-    --ok: #15803d;
-    --warn: #b42318;
-    --grip: rgba(0, 0, 0, 0.18);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: rgba(28, 28, 30, 0.78);
-      --line: rgba(255, 255, 255, 0.12);
-      --fg: #f2f2f7;
-      --muted: #9a9aa0;
-      --ok: #4ade80;
-      --warn: #fca5a5;
-      --grip: rgba(255, 255, 255, 0.22);
-    }
-  }
+  /* Modelled on reflect-mono's quick-pill: 46px tall, fully rounded, dark
+     gradient with a hairline top highlight and a long soft shadow. Deliberately
+     dark in both themes — like the original, it is an overlay, not a document. */
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; overflow: hidden; }
+  html, body { height: 100%; margin: 0; overflow: hidden; background: transparent; }
   body {
-    font: 12px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-    color: var(--fg);
+    font: 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
     -webkit-user-select: none; user-select: none;
     cursor: default;
   }
-  /* GRIP_H (18px) of clear space up top for the grip. A transparent native
-     overlay covers the whole panel, so it drags from anywhere.
-     Height is intentionally auto — the page measures itself and asks the native
-     panel to shrink to fit, so there is never dead space below the last row. */
-  #card {
-    height: auto;
-    background: var(--bg);
-    /* Blurred so whatever is behind never competes with the forecast text. */
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
-    backdrop-filter: blur(22px) saturate(180%);
-    border: 0.5px solid var(--line);
-    border-radius: 12px;
-    /* Nearly invisible at rest, solid the moment you point at it. The whole
-       card fades (text included) rather than just the fill, so at rest it reads
-       as a ghost rather than as washed-out, unreadable text.
-       `.hover` is set natively — the drag overlay eats mouse events, so the
-       page never sees CSS :hover (see widget_panel.DragOverlay). */
+  #root {
+    height: 100%;
+    display: flex; align-items: center; justify-content: flex-start;
+    padding: 8px;
+  }
+  #pill {
+    height: 46px;
+    border-radius: 24px;
+    background: linear-gradient(180deg, #1c1c1c 0%, #111 100%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow:
+      0 16px 48px -8px rgba(0, 0, 0, 0.5),
+      0 1px 0 rgba(255, 255, 255, 0.04) inset;
+    display: inline-flex; align-items: center;
+    gap: 14px;
+    padding: 0 16px;
+    white-space: nowrap;
+    /* Near-invisible at rest, solid the moment you point at it. `.hover` is set
+       natively: the drag overlay eats mouse events so the page never sees CSS
+       :hover (see widget_panel.DragOverlay). */
     opacity: 0.22;
     transition: opacity 140ms ease-out;
-    padding: 18px 11px 9px;
-    overflow: hidden;
   }
-  .src {
-    font-size: 9.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--muted); margin: 3px 0 2px;
-  }
-  .src:first-child { margin-top: 0; }
-  .row { display: flex; align-items: baseline; gap: 7px; padding: 1px 0; }
-  .label { flex: 0 0 46px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .msg {
-    flex: 1; min-width: 0;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  html.hover #pill { opacity: 1; }
+
+  .item { display: inline-flex; align-items: center; gap: 7px; }
+  .mark { width: 15px; height: 15px; flex: 0 0 15px; display: block; }
+  .val {
+    /* Tabular + a floor width so the pill does not twitch as digits change. */
     font-variant-numeric: tabular-nums;
+    font-size: 13px; font-weight: 590; letter-spacing: -0.01em;
+    min-width: 46px;
+    color: rgba(255, 255, 255, 0.55);
   }
-  .ok .msg { color: var(--ok); }
-  .warn .msg { color: var(--warn); }
-  .muted .msg { color: var(--muted); }
-  html.hover #card { opacity: 1; }
-  #empty { color: var(--muted); padding-top: 2px; }
-  /* Painted by the page so it lines up with the card, but the strip that
-     actually receives the drag is a native view above it. */
-  #grip {
-    position: fixed; top: 6px; left: 50%; transform: translateX(-50%);
-    width: 26px; height: 3px; border-radius: 2px; background: var(--grip);
-    opacity: 0.22;
-    transition: opacity 140ms ease-out;
-  }
-  html.hover #grip { opacity: 1; }
+  .val.bad { color: #ff6b6b; }
+  .val.good { color: #4ade80; }
 </style>
 </head>
 <body>
-  <div id="grip"></div>
-  <div id="card"><div id="empty">connecting…</div></div>
+  <div id="root">
+    <div id="pill">
+      <span class="item">
+        <!-- Claude's radial burst, drawn as tapered spokes (an approximation). -->
+        <svg class="mark" viewBox="0 0 24 24" aria-label="Claude">
+          <g fill="#8c8cf5">
+            <rect x="10.9" y="1.6" width="2.2" height="20.8" rx="1.1" transform="rotate(0 12 12)"/>
+            <rect x="10.9" y="1.6" width="2.2" height="20.8" rx="1.1" transform="rotate(30 12 12)"/>
+            <rect x="10.9" y="1.6" width="2.2" height="20.8" rx="1.1" transform="rotate(60 12 12)"/>
+            <rect x="10.9" y="1.6" width="2.2" height="20.8" rx="1.1" transform="rotate(90 12 12)"/>
+            <rect x="10.9" y="1.6" width="2.2" height="20.8" rx="1.1" transform="rotate(120 12 12)"/>
+            <rect x="10.9" y="1.6" width="2.2" height="20.8" rx="1.1" transform="rotate(150 12 12)"/>
+          </g>
+        </svg>
+        <span class="val" id="cVal">–</span>
+      </span>
+      <span class="item">
+        <!-- OpenAI's hexagonal knot, simplified to a stroked hex rosette. -->
+        <svg class="mark" viewBox="0 0 24 24" aria-label="Codex">
+          <path d="M12 3.2 19.6 7.6 19.6 16.4 12 20.8 4.4 16.4 4.4 7.6 Z"
+                fill="none" stroke="#f59e0b" stroke-width="2.1"
+                stroke-linejoin="round" stroke-linecap="round"/>
+          <path d="M12 3.2 12 12 19.6 16.4 M12 12 4.4 16.4"
+                fill="none" stroke="#f59e0b" stroke-width="2.1"
+                stroke-linejoin="round" stroke-linecap="round" opacity="0.55"/>
+        </svg>
+        <span class="val" id="xVal">–</span>
+      </span>
+    </div>
+  </div>
   <script src="/static/forecast.js"></script>
   <script src="/static/widget.js"></script>
 </body>

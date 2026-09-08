@@ -337,15 +337,18 @@ async def _startup():
     asyncio.create_task(hub.loop())
 
 
+NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+
 @app.get("/")
 async def index():
-    return FileResponse(os.path.join(STATIC, "index.html"))
+    return FileResponse(os.path.join(STATIC, "index.html"), headers=NO_CACHE)
 
 
 @app.get("/widget")
 async def widget():
     """The floating HUD (menubar.py hosts this in an always-on-top panel)."""
-    return FileResponse(os.path.join(STATIC, "widget.html"))
+    return FileResponse(os.path.join(STATIC, "widget.html"), headers=NO_CACHE)
 
 
 @app.get("/api/latest")
@@ -418,7 +421,22 @@ async def ws(sock: WebSocket):
         hub.clients.discard(sock)
 
 
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+class NoCacheStatic(StaticFiles):
+    """Revalidate every asset, every time.
+
+    Without this the browser applies heuristic caching (there are no
+    Cache-Control headers on a plain StaticFiles mount), and after an update it
+    happily keeps serving a stale forecast.js — leaving the page running half
+    old and half new code, with no error to show for it. The server is on
+    localhost; revalidation costs nothing."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
+
+
+app.mount("/static", NoCacheStatic(directory=STATIC), name="static")
 
 
 if __name__ == "__main__":

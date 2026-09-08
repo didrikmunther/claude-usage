@@ -56,6 +56,52 @@ function cycleSamples(data, idx, resetMs, winMs) {
   return pts.slice(start);
 }
 
+// Forward pace for one window, in %/sec. Conservative: the higher of the recent
+// trailing rate and the cycle average, so a burst pushes it up but it won't relax
+// the instant you pause after one. Returns all three so callers can also explain
+// which one is driving.
+function pace(cur, elapsedMs, winMs, samples, nowMs) {
+  const now = nowMs == null ? Date.now() : nowMs;
+  const avgPerSec = cur / (elapsedMs / 1000);
+  let recentPerSec = null;
+  if (samples && samples.length >= 3) {
+    const lookback = Math.min(12 * 3600, Math.max(1200, winMs / 1000 / 12));  // 5h→25m, 7d→12h
+    const r = recentSlope(samples, lookback, now / 1000);
+    if (r != null && isFinite(r)) recentPerSec = r;
+  }
+  const perSec = recentPerSec != null ? Math.max(recentPerSec, avgPerSec) : avgPerSec;
+  return { avgPerSec, recentPerSec, perSec };
+}
+
+// The signed gap, in ms, between running out and the window resetting.
+//   negative → you hit 100% this long BEFORE the reset (you run out early)
+//   positive → the reset arrives first, by this much (you have slack)
+//   Infinity → at the current pace you never get there
+// null when there is nothing honest to say yet. This is what the pill shows.
+function windowMargin(cur, winMs, resetIso, samples) {
+  if (cur == null) return null;
+  const resetMs = resetIso ? new Date(resetIso).getTime() : null;
+  if (resetMs == null) return null;
+  const now = Date.now();
+  const elapsed = now - (resetMs - winMs);
+  if (elapsed < MIN_ELAPSED_MS) return null;      // too soon after a reset to mean anything
+  if (cur >= 99.5) return now - resetMs;          // already out; negative by the time still to serve
+  const { perSec } = pace(cur, elapsed, winMs, samples, now);
+  if (!(perSec > 1e-9)) return Infinity;          // idle → never runs out
+  return now + ((100 - cur) / perSec) * 1000 - resetMs;
+}
+
+// A margin as the pill renders it: "-2.2d", "+5.4h", "-40m", "+∞".
+function fmtMargin(ms) {
+  if (ms == null) return null;
+  if (!isFinite(ms)) return "+∞";
+  const sign = ms < 0 ? "-" : "+";
+  const sec = Math.abs(ms) / 1000;
+  if (sec >= 86400) return sign + (sec / 86400).toFixed(1) + "d";
+  if (sec >= 3600) return sign + (sec / 3600).toFixed(1) + "h";
+  return sign + Math.round(sec / 60) + "m";
+}
+
 // Forecast for one window. "already used" (cur%) stays anchored to the reset; the
 // FORWARD pace uses the recent weighted rate when history is available, else the
 // cycle average. Returns {cls, msg, rate} or null.
@@ -69,16 +115,7 @@ function forecast(cur, winMs, resetIso, samples) {
   const resetIn = fmtDur((resetMs - now) / 1000);
   if (elapsed < MIN_ELAPSED_MS) return { cls: "muted", msg: `just reset — gathering data… · resets in ${resetIn}` };
 
-  const avgPerSec = cur / (elapsed / 1000);
-  let recentPerSec = null;
-  if (samples && samples.length >= 3) {
-    const lookback = Math.min(12 * 3600, Math.max(1200, winMs / 1000 / 12));  // 5h→25m, 7d→12h
-    const r = recentSlope(samples, lookback, now / 1000);
-    if (r != null && isFinite(r)) recentPerSec = r;
-  }
-  // Conservative: forward pace is the higher of recent-trailing vs cycle-average,
-  // so a burst pushes it up but it won't relax the instant you pause after one.
-  const perSec = recentPerSec != null ? Math.max(recentPerSec, avgPerSec) : avgPerSec;
+  const { avgPerSec, recentPerSec, perSec } = pace(cur, elapsed, winMs, samples, now);
 
   const fmtRate = (v) => (v >= 0 ? "+" : "") + v.toFixed(Math.abs(v) < 10 ? 1 : 0) + "%/h";
   const avgPerH = avgPerSec * 3600, recentPerH = recentPerSec != null ? recentPerSec * 3600 : null;
@@ -104,5 +141,6 @@ function forecast(cur, winMs, resetIso, samples) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { MIN_ELAPSED_MS, fmtDur, fmtClock, recentSlope, cycleSamples, forecast };
+  module.exports = { MIN_ELAPSED_MS, fmtDur, fmtClock, recentSlope, cycleSamples,
+                     pace, windowMargin, fmtMargin, forecast };
 }

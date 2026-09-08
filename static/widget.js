@@ -1,22 +1,27 @@
 "use strict";
 
-// The floating widget: the dashboard's forecast sentences and nothing else.
+// The floating pill: one signed number per platform, nothing else.
 //
-// It keeps the same rolling sample buffers the dashboard does, because
-// forecast() needs this cycle's samples to work out the recent burn rate — the
-// live payload alone only carries the current percentage. Wording comes from
-// forecast.js, so the widget and the dashboard can never disagree.
+//   <claude mark> -2.2d      <codex mark> +5.4h
+//
+// The number is the margin (see windowMargin in forecast.js): how long before
+// the reset you run out (negative, red), or how much slack the reset gives you
+// (positive, green). Per platform it is the WORST of that platform's windows —
+// the one actually constraining you — so a 5-hour crunch can't hide behind a
+// comfortable weekly number.
+//
+// It keeps the same rolling sample buffers the dashboard does, because the pace
+// behind the margin needs this cycle's samples; the live payload alone only
+// carries the current percentage.
 
 const WS_URL = `ws://${location.host}/ws`;
 const MAX_POINTS = 20000;
 
-// Mirrors app.js's CLAUDE_WIN, trimmed to the two windows worth glancing at.
 // series = index into C.data for the recent-rate method (null → cycle average).
 const CLAUDE_WIN = [
-  { key: "fh", label: "5-hour", reset: "five_hour", winMs: 5 * 3600e3, series: 1 },
-  { key: "sd", label: "7-day", reset: "seven_day", winMs: 7 * 24 * 3600e3, series: null },
+  { key: "fh", reset: "five_hour", winMs: 5 * 3600e3, series: 1 },
+  { key: "sd", reset: "seven_day", winMs: 7 * 24 * 3600e3, series: null },
 ];
-const CX_ORDER = ["5-hour", "7-day"];
 const CX_SERIES = { "5-hour": 1 };        // only Codex's 5-hour uses the recent rate
 
 const C = { data: [[], [], []], resets: {}, last: null };
@@ -31,62 +36,58 @@ function push(st, tsSec, a, b) {
   }
 }
 
-function row(label, p) {
-  if (!p) return "";
-  return `<div class="row ${p.cls}"><span class="label">${label}</span>` +
-         `<span class="msg" title="${p.msg.replace(/"/g, "&quot;")}">${p.msg}</span></div>`;
+// Smallest margin across a platform's windows — the binding constraint. null
+// when no window has anything trustworthy to say yet.
+function worst(margins) {
+  const known = margins.filter((m) => m != null);
+  return known.length ? Math.min(...known) : null;
 }
 
-function claudeRows() {
-  if (!C.last) return [];
-  const out = [];
-  for (const w of CLAUDE_WIN) {
-    const cur = C.last[w.key];
-    if (cur == null) continue;
+function claudeMargin() {
+  if (!C.last) return null;
+  return worst(CLAUDE_WIN.map((w) => {
     const resetIso = C.resets[w.reset];
     const samples = (w.series && resetIso)
       ? cycleSamples(C.data, w.series, new Date(resetIso).getTime(), w.winMs) : null;
-    out.push(row(w.label, forecast(cur, w.winMs, resetIso, samples)));
-  }
-  return out.filter(Boolean);
+    return windowMargin(C.last[w.key], w.winMs, resetIso, samples);
+  }));
 }
 
-function codexRows() {
-  if (!X.last) return [];
-  const wins = (X.last.windows || []).slice();
-  // Same order the dashboard uses, with anything unexpected appended.
-  wins.sort((a, b) => {
-    const ia = CX_ORDER.indexOf(a.label), ib = CX_ORDER.indexOf(b.label);
-    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-  });
-  return wins.map((w) => {
+function codexMargin() {
+  if (!X.last) return null;
+  return worst((X.last.windows || []).map((w) => {
     const idx = CX_SERIES[w.label] || null;
     const winMs = (w.window_seconds || 0) * 1000;
     const samples = (idx && w.reset_at)
       ? cycleSamples(X.data, idx, new Date(w.reset_at).getTime(), winMs) : null;
-    return row(w.label, forecast(w.used_percent, winMs, w.reset_at, samples));
-  }).filter(Boolean);
+    return windowMargin(w.used_percent, winMs, w.reset_at, samples);
+  }));
 }
 
-// The row count changes as windows appear and disappear (Codex's 5-hour shows up
-// only when it has data), so the panel is told what height to be rather than
-// guessing. Native side listens on the "size" handler; harmless in a browser tab.
-let lastH = 0;
-function reportHeight() {
-  const h = Math.ceil($("card").getBoundingClientRect().height);
-  if (h === lastH || !h) return;
-  lastH = h;
+function paint(el, ms) {
+  const txt = fmtMargin(ms);
+  el.textContent = txt == null ? "–" : txt;
+  el.classList.toggle("bad", txt != null && ms < 0);
+  el.classList.toggle("good", txt != null && ms >= 0);
+}
+
+// The pill's width shifts a little as units change (40m → 5.4h → 2.2d), so the
+// panel is told what to be rather than guessing. Harmless in a browser tab.
+let lastW = 0, lastH = 0;
+function reportSize() {
+  const r = $("pill").getBoundingClientRect();
+  const w = Math.ceil(r.width) + 16;          // + #root padding
+  const h = Math.ceil(r.height) + 16;
+  if ((w === lastW && h === lastH) || !w || !h) return;
+  lastW = w; lastH = h;
   const mh = window.webkit && window.webkit.messageHandlers;
-  if (mh && mh.size) mh.size.postMessage(h);
+  if (mh && mh.size) mh.size.postMessage({ w, h });
 }
 
 function render() {
-  const cl = claudeRows(), cx = codexRows();
-  const parts = [];
-  if (cl.length) parts.push(`<div class="src">Claude</div>`, ...cl);
-  if (cx.length) parts.push(`<div class="src">Codex</div>`, ...cx);
-  $("card").innerHTML = parts.length ? parts.join("") : `<div id="empty">gathering data…</div>`;
-  reportHeight();
+  paint($("cVal"), claudeMargin());
+  paint($("xVal"), codexMargin());
+  reportSize();
 }
 
 // ---- websocket (same feed as the dashboard) ----
@@ -96,8 +97,8 @@ function connect() {
   ws = new WebSocket(WS_URL);
   ws.onopen = () => { backoff = 500; };
   ws.onclose = () => {
-    // Keep the last numbers on screen rather than blanking; the clock in
-    // forecast() keeps counting them down until fresh data lands.
+    // Keep the last numbers on screen rather than blanking; they keep counting
+    // down against the wall clock until fresh data lands.
     setTimeout(connect, backoff);
     backoff = Math.min(8000, backoff * 2);
   };
@@ -125,4 +126,4 @@ function connect() {
 }
 
 connect();
-setInterval(render, 1000);   // keep the countdowns ticking between samples
+setInterval(render, 1000);   // the margin shrinks in real time between samples

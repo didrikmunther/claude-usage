@@ -1,8 +1,11 @@
-"""Always-on-top floating widget: the forecast lines, draggable, over everything.
+"""Always-on-top floating pill: one signed margin per platform, over everything.
 
-A borderless non-activating NSPanel hosting a WKWebView pointed at /widget, so
-the forecast wording comes from the same JavaScript the dashboard uses instead
-of a second implementation that would drift (see static/forecast.js).
+A borderless non-activating NSPanel hosting a WKWebView pointed at /widget. The
+margin arithmetic comes from the same JavaScript the dashboard uses instead of a
+second implementation that would drift (see static/forecast.js).
+
+Shaped after reflect-mono's quick-pill: a 46pt fully-rounded dark bar, sized to
+its content rather than to a fixed width.
 
 Two details are load-bearing:
 
@@ -24,6 +27,7 @@ Two details are load-bearing:
   truncated rows no longer appear.
 """
 import os
+import sys
 
 from AppKit import (
     NSPanel, NSView, NSColor, NSBezierPath, NSScreen, NSMakeRect, NSMakePoint,
@@ -37,14 +41,17 @@ from AppKit import (
 )
 import objc
 from Foundation import NSObject, NSURL, NSURLRequest, NSTimer
-from WebKit import WKWebView, WKWebViewConfiguration, WKUserContentController
+from WebKit import (WKWebView, WKWebViewConfiguration, WKUserContentController,
+                    WKWebsiteDataStore)
 
 PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "44405"))
 BASE = f"http://127.0.0.1:{PORT}"
 
-W, H = 400, 150          # width, and the height used until the page reports its own
-MIN_H, MAX_H = 44, 400   # clamp, so a broken page can't produce a silly panel
-GRIP_H = 18              # top padding the page reserves for its grip affordance
+# Starting size only; the page measures its pill and reports the real one.
+# Height mirrors reflect-mono's quick-pill (46pt pill + 8pt padding each side).
+W, H = 210, 62
+MIN_W, MAX_W = 80, 620   # clamps, so a broken page can't produce a silly panel
+MIN_H, MAX_H = 40, 200
 MARGIN = 24              # inset from the screen corner on first run
 POS_KEY_X, POS_KEY_Y = "widgetX", "widgetY"
 
@@ -121,6 +128,9 @@ class WidgetPanel(NSObject):
         content = panel.contentView()
 
         conf = WKWebViewConfiguration.alloc().init()
+        # Ephemeral store: no disk cache, so an updated forecast.js can never be
+        # shadowed by a stale copy. This page is always a localhost fetch.
+        conf.setWebsiteDataStore_(WKWebsiteDataStore.nonPersistentDataStore())
         # The page measures its own content and posts the height here, so the
         # panel hugs the rows instead of leaving dead space under the last one.
         ucc = WKUserContentController.alloc().init()
@@ -220,23 +230,31 @@ class WidgetPanel(NSObject):
 
     # ---- content-driven sizing ----
     def userContentController_didReceiveScriptMessage_(self, _ucc, message):
+        body = message.body()
         try:
-            h = int(round(float(message.body())))
-        except Exception:
+            # WKWebView hands a JS object over as an NSDictionary.
+            w = int(round(float(body["w"])))
+            h = int(round(float(body["h"])))
+        except Exception as e:
+            # Never silently: a malformed size message used to just freeze the
+            # panel at its default with no clue why.
+            print("widget: bad size message %r (%s: %s)" % (body, type(e).__name__, e),
+                  file=sys.stderr)
             return
-        self.setHeight_(max(MIN_H, min(MAX_H, h)))
+        self.resizeToW_h_(max(MIN_W, min(MAX_W, w)), max(MIN_H, min(MAX_H, h)))
 
-    def setHeight_(self, h):
+    def resizeToW_h_(self, w, h):
         if self._panel is None:
             return
         f = self._panel.frame()
-        if abs(f.size.height - h) < 1:
+        if abs(f.size.width - w) < 1 and abs(f.size.height - h) < 1:
             return
-        # AppKit origin is bottom-left, so hold the TOP edge still and let the
-        # panel grow or shrink downward — otherwise it would creep up the screen.
+        # AppKit origin is bottom-left. Hold the TOP-LEFT corner still: the panel
+        # grows rightward and downward, so it never creeps across the screen as
+        # the numbers change units (40m -> 5.4h -> 2.2d).
         top = f.origin.y + f.size.height
         self._panel.setFrame_display_animate_(
-            NSMakeRect(f.origin.x, top - h, f.size.width, h), True, False)
+            NSMakeRect(f.origin.x, top - h, w, h), True, False)
 
     # ---- persistence ----
     def windowDidMove_(self, _notification):
