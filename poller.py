@@ -77,13 +77,29 @@ def _decrypt(enc: bytes, key: bytes) -> str | None:
     return None
 
 
+def _cookie_rows(db: str) -> list:
+    """The claude.ai rows out of a copied Cookies database.
+
+    Closed explicitly. A sqlite3.Connection sits in a reference cycle, so
+    refcounting never reclaims it and only a rare cyclic GC pass would — leaving
+    one descriptor per poll behind until the process hit its open-file limit and
+    every fetch started failing with EMFILE, while the server went on serving
+    stale numbers. `with sqlite3.connect(...)` is NOT a fix here: it commits a
+    transaction, it does not close."""
+    con = sqlite3.connect(db)
+    try:
+        return con.execute(
+            "SELECT name, encrypted_value FROM cookies WHERE host_key LIKE '%claude.ai%'"
+        ).fetchall()
+    finally:
+        con.close()
+
+
 def read_cookies(key: bytes) -> dict:
     """Re-read + decrypt claude.ai cookies fresh (they rotate while the app runs)."""
     db = "/tmp/claude_usage_cookies.db"
     shutil.copyfile(os.path.join(SUPPORT, "Cookies"), db)
-    rows = sqlite3.connect(db).execute(
-        "SELECT name, encrypted_value FROM cookies WHERE host_key LIKE '%claude.ai%'"
-    ).fetchall()
+    rows = _cookie_rows(db)
     out = {}
     for name, enc in rows:
         v = _decrypt(enc, key)

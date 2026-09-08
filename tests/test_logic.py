@@ -203,3 +203,38 @@ def test_loop_keeps_polling_after_a_failure():
     assert len(calls) == 3                         # kept going past the failure
     assert hub.status["state"] == "error"
     assert "database" in hub.status["message"]
+
+
+# ---- descriptor hygiene ---------------------------------------------------
+# A sqlite3.Connection sits in a reference cycle (statement cache -> cursors ->
+# connection), so refcounting never reclaims it; only a cyclic GC pass would, and
+# a low-allocation server runs those rarely. Leaving one unclosed per poll walked
+# the process into its open-file limit, after which every fetch failed with
+# EMFILE and the dashboard silently served stale data for days.
+#
+# Note `with sqlite3.connect(...)` does NOT close — it commits a transaction.
+
+def _make_cookie_db(path):
+    import sqlite3
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE cookies (name TEXT, encrypted_value BLOB, host_key TEXT)")
+    con.execute("INSERT INTO cookies VALUES ('sessionKey', X'0102', '.claude.ai')")
+    con.commit()
+    con.close()
+
+
+def test_cookie_rows_holds_no_descriptors():
+    from poller import _cookie_rows
+
+    open_fds = lambda: len(os.listdir("/dev/fd"))
+    with tempfile.TemporaryDirectory() as d:
+        db = os.path.join(d, "Cookies")
+        _make_cookie_db(db)
+
+        assert _cookie_rows(db) == [("sessionKey", b"\x01\x02")]   # still reads correctly
+        before = open_fds()                                        # warm-up done
+        for _ in range(60):
+            _cookie_rows(db)
+        after = open_fds()
+
+    assert after == before, f"leaked {after - before} descriptors over 60 reads"

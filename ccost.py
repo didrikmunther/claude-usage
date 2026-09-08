@@ -90,7 +90,11 @@ def _load() -> dict:
 def _save(state: dict):
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
     tmp = CACHE + ".tmp"
-    json.dump(state, open(tmp, "w"))
+    # Written through a context manager: os.replace below publishes this file,
+    # and whether an unmanaged handle had flushed by then was down to refcount
+    # timing — which could publish a truncated cache.
+    with open(tmp, "w") as fh:
+        json.dump(state, fh)
     os.replace(tmp, CACHE)
 
 
