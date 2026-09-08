@@ -24,9 +24,10 @@
     border-radius: 24px;
     background: linear-gradient(180deg, #1c1c1c 0%, #111 100%);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow:
-      0 16px 48px -8px rgba(0, 0, 0, 0.5),
-      0 1px 0 rgba(255, 255, 255, 0.04) inset;
+    /* No outer drop shadow: harmless at rest, but once hover takes the pill to
+       full opacity it read as a dark halo around the edge. The inset hairline
+       still lifts the top edge. */
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
     display: inline-flex; align-items: center;
     gap: 14px;
     padding: 0 16px;
@@ -58,7 +59,7 @@
       <span class="item">
         <!-- Claude's radial burst, drawn as tapered spokes (an approximation). -->
         <svg class="mark" viewBox="0 0 24 24" aria-label="Claude">
-          <g fill="#8c8cf5">
+          <g fill="#f59e0b">
             <rect x="10.9" y="1.6" width="2.2" height="20.8" rx="1.1" transform="rotate(0 12 12)"/>
             <rect x="10.9" y="1.6" width="2.2" height="20.8" rx="1.1" transform="rotate(30 12 12)"/>
             <rect x="10.9" y="1.6" width="2.2" height="20.8" rx="1.1" transform="rotate(60 12 12)"/>
@@ -73,10 +74,10 @@
         <!-- OpenAI's hexagonal knot, simplified to a stroked hex rosette. -->
         <svg class="mark" viewBox="0 0 24 24" aria-label="Codex">
           <path d="M12 3.2 19.6 7.6 19.6 16.4 12 20.8 4.4 16.4 4.4 7.6 Z"
-                fill="none" stroke="#f59e0b" stroke-width="2.1"
+                fill="none" stroke="#8c8cf5" stroke-width="2.1"
                 stroke-linejoin="round" stroke-linecap="round"/>
           <path d="M12 3.2 12 12 19.6 16.4 M12 12 4.4 16.4"
-                fill="none" stroke="#f59e0b" stroke-width="2.1"
+                fill="none" stroke="#8c8cf5" stroke-width="2.1"
                 stroke-linejoin="round" stroke-linecap="round" opacity="0.55"/>
         </svg>
         <span class="val" id="xVal">–</span>
