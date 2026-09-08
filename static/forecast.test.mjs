@@ -77,54 +77,55 @@ test("forecast calls out an untouched cycle", () => {
 });
 
 
-// ---- margin: the number the floating pill shows -------------------------
-// Signed gap between running out and the window resetting. Negative means you
-// hit 100% before the reset; positive means the reset saves you.
-const { windowMargin, fmtMargin } = mod;
+// ---- overshoot: the number the floating pill shows ---------------------
+// Signed gap between the reset and running out. POSITIVE means you hit the
+// limit before the reset (bad, red); negative means the reset saves you first
+// (good, green). The sign is deliberately "+ is bad".
+const { windowOvershoot, fmtOvershoot } = mod;
 
-test("fmtMargin picks a unit and always carries a sign", () => {
-  assert.equal(fmtMargin(-2.2 * 24 * H), "-2.2d");
-  assert.equal(fmtMargin(5.4 * H), "+5.4h");
-  assert.equal(fmtMargin(-40 * 60e3), "-40m");
-  assert.equal(fmtMargin(Infinity), "+∞");
-  assert.equal(fmtMargin(null), null);
+test("fmtOvershoot picks a unit and always carries a sign", () => {
+  assert.equal(fmtOvershoot(2.2 * 24 * H), "+2.2d");
+  assert.equal(fmtOvershoot(-5.4 * H), "-5.4h");
+  assert.equal(fmtOvershoot(40 * 60e3), "+40m");
+  assert.equal(fmtOvershoot(-Infinity), "-∞");
+  assert.equal(fmtOvershoot(null), null);
 });
 
-test("fmtMargin switches units at a day and an hour", () => {
-  assert.match(fmtMargin(23.9 * H), /h$/);
-  assert.match(fmtMargin(24.1 * H), /d$/);
-  assert.match(fmtMargin(59 * 60e3), /m$/);
-  assert.match(fmtMargin(61 * 60e3), /h$/);
+test("fmtOvershoot switches units at a day and an hour", () => {
+  assert.match(fmtOvershoot(23.9 * H), /h$/);
+  assert.match(fmtOvershoot(24.1 * H), /d$/);
+  assert.match(fmtOvershoot(59 * 60e3), /m$/);
+  assert.match(fmtOvershoot(61 * 60e3), /h$/);
 });
 
-test("margin is negative when the pace runs out before the reset", () => {
+test("overshoot is POSITIVE when the pace runs out before the reset", () => {
   // 4h into a 5h window at 85%: ~21%/h burns the last 15% in well under an hour.
-  const m = windowMargin(85, 5 * H, resetIn(1), null);
-  assert.ok(m < 0, `expected negative, got ${m}`);
-  assert.match(fmtMargin(m), /^-\d+m$/);
+  const m = windowOvershoot(85, 5 * H, resetIn(1), null);
+  assert.ok(m > 0, `expected positive (over the limit), got ${m}`);
+  assert.match(fmtOvershoot(m), /^\+\d+m$/);
 });
 
-test("margin is positive when the reset arrives first", () => {
+test("overshoot is NEGATIVE when the reset arrives first", () => {
   // 4h into a 5h window at 20%: 5%/h needs 16h more, but the reset is in 1h.
-  const m = windowMargin(20, 5 * H, resetIn(1), null);
-  assert.ok(m > 0, `expected positive, got ${m}`);
-  assert.match(fmtMargin(m), /^\+1[0-9]\.\d h?|^\+\d+\.\dh$/);
+  const m = windowOvershoot(20, 5 * H, resetIn(1), null);
+  assert.ok(m < 0, `expected negative (inside the limit), got ${m}`);
+  assert.match(fmtOvershoot(m), /^-\d+\.\dh$/);
 });
 
-test("an idle cycle never runs out", () => {
-  assert.equal(windowMargin(0, 5 * H, resetIn(1), null), Infinity);
-  assert.equal(fmtMargin(windowMargin(0, 5 * H, resetIn(1), null)), "+∞");
+test("an idle cycle never reaches the limit", () => {
+  assert.equal(windowOvershoot(0, 5 * H, resetIn(1), null), -Infinity);
+  assert.equal(fmtOvershoot(windowOvershoot(0, 5 * H, resetIn(1), null)), "-∞");
 });
 
-test("margin stays silent when it cannot know", () => {
-  assert.equal(windowMargin(null, 5 * H, resetIn(1), null), null);   // no reading
-  assert.equal(windowMargin(30, 5 * H, null, null), null);           // no reset info
-  assert.equal(windowMargin(3, 5 * H, resetIn(4 + 55 / 60), null), null);  // just reset
+test("overshoot stays silent when it cannot know", () => {
+  assert.equal(windowOvershoot(null, 5 * H, resetIn(1), null), null);   // no reading
+  assert.equal(windowOvershoot(30, 5 * H, null, null), null);           // no reset info
+  assert.equal(windowOvershoot(3, 5 * H, resetIn(4 + 55 / 60), null), null);  // just reset
 });
 
-test("already at the limit reads as negative by the time still to serve", () => {
-  const m = windowMargin(100, 5 * H, resetIn(2), null);
-  assert.ok(m < 0);
+test("already at the limit reads as positive by the time still to serve", () => {
+  const m = windowOvershoot(100, 5 * H, resetIn(2), null);
+  assert.ok(m > 0);
   // ~2h of the window left to sit out.
-  assert.ok(Math.abs(m + 2 * H) < 60e3, `expected ~-2h, got ${m / H}h`);
+  assert.ok(Math.abs(m - 2 * H) < 60e3, `expected ~+2h, got ${m / H}h`);
 });

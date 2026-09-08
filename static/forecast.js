@@ -73,28 +73,30 @@ function pace(cur, elapsedMs, winMs, samples, nowMs) {
   return { avgPerSec, recentPerSec, perSec };
 }
 
-// The signed gap, in ms, between running out and the window resetting.
-//   negative → you hit 100% this long BEFORE the reset (you run out early)
-//   positive → the reset arrives first, by this much (you have slack)
-//   Infinity → at the current pace you never get there
-// null when there is nothing honest to say yet. This is what the pill shows.
-function windowMargin(cur, winMs, resetIso, samples) {
+// The signed gap, in ms, between the window resetting and you running out.
+//   positive → you hit 100% this long BEFORE the reset (you overshoot the limit)
+//   negative → the reset arrives first, by this much (you stay inside it)
+//   -Infinity → at the current pace you never get there
+// null when there is nothing honest to say yet. This is what the pill shows, and
+// the sign is deliberately "+ is bad": the number you care about is how far over
+// you are going, not how much room you have left.
+function windowOvershoot(cur, winMs, resetIso, samples) {
   if (cur == null) return null;
   const resetMs = resetIso ? new Date(resetIso).getTime() : null;
   if (resetMs == null) return null;
   const now = Date.now();
   const elapsed = now - (resetMs - winMs);
   if (elapsed < MIN_ELAPSED_MS) return null;      // too soon after a reset to mean anything
-  if (cur >= 99.5) return now - resetMs;          // already out; negative by the time still to serve
+  if (cur >= 99.5) return resetMs - now;          // already out; positive by the time still to serve
   const { perSec } = pace(cur, elapsed, winMs, samples, now);
-  if (!(perSec > 1e-9)) return Infinity;          // idle → never runs out
-  return now + ((100 - cur) / perSec) * 1000 - resetMs;
+  if (!(perSec > 1e-9)) return -Infinity;         // idle → never hits the limit
+  return resetMs - (now + ((100 - cur) / perSec) * 1000);
 }
 
-// A margin as the pill renders it: "-2.2d", "+5.4h", "-40m", "+∞".
-function fmtMargin(ms) {
+// An overshoot as the pill renders it: "+2.2d", "-5.4h", "+40m", "-∞".
+function fmtOvershoot(ms) {
   if (ms == null) return null;
-  if (!isFinite(ms)) return "+∞";
+  if (!isFinite(ms)) return ms > 0 ? "+∞" : "-∞";
   const sign = ms < 0 ? "-" : "+";
   const sec = Math.abs(ms) / 1000;
   if (sec >= 86400) return sign + (sec / 86400).toFixed(1) + "d";
@@ -142,5 +144,5 @@ function forecast(cur, winMs, resetIso, samples) {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { MIN_ELAPSED_MS, fmtDur, fmtClock, recentSlope, cycleSamples,
-                     pace, windowMargin, fmtMargin, forecast };
+                     pace, windowOvershoot, fmtOvershoot, forecast };
 }
