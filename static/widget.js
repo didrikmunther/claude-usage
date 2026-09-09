@@ -4,11 +4,11 @@
 //
 //   <claude mark> -2.2d      <codex mark> +5.4h
 //
-// The number is the overshoot (see windowOvershoot in forecast.js): how long
-// before the reset you run out (positive, red), or how much slack the reset
-// gives you (negative, green). Per platform it is the WORST of that platform's
-// windows — the one actually constraining you — so a 5-hour crunch can't hide
-// behind a comfortable weekly number.
+// The number is the margin (see windowMargin in forecast.js): how long before
+// the reset you run out (negative, red), or how much slack the reset gives you
+// (positive, green). Per platform it is the WORST of that platform's windows —
+// the one actually constraining you — so a 5-hour crunch can't hide behind a
+// comfortable weekly number.
 //
 // It keeps the same rolling sample buffers the dashboard does, because the pace
 // behind the margin needs this cycle's samples; the live payload alone only
@@ -36,40 +36,39 @@ function push(st, tsSec, a, b) {
   }
 }
 
-// Largest overshoot across a platform's windows — the binding constraint, now
-// that bigger means worse. null when no window has anything trustworthy to say.
-function worst(overshoots) {
-  const known = overshoots.filter((m) => m != null);
-  return known.length ? Math.max(...known) : null;
+// Smallest margin across a platform's windows — the binding constraint. null
+// when no window has anything trustworthy to say yet.
+function worst(margins) {
+  const known = margins.filter((m) => m != null);
+  return known.length ? Math.min(...known) : null;
 }
 
-function claudeOvershoot() {
+function claudeMargin() {
   if (!C.last) return null;
   return worst(CLAUDE_WIN.map((w) => {
     const resetIso = C.resets[w.reset];
     const samples = (w.series && resetIso)
       ? cycleSamples(C.data, w.series, new Date(resetIso).getTime(), w.winMs) : null;
-    return windowOvershoot(C.last[w.key], w.winMs, resetIso, samples);
+    return windowMargin(C.last[w.key], w.winMs, resetIso, samples);
   }));
 }
 
-function codexOvershoot() {
+function codexMargin() {
   if (!X.last) return null;
   return worst((X.last.windows || []).map((w) => {
     const idx = CX_SERIES[w.label] || null;
     const winMs = (w.window_seconds || 0) * 1000;
     const samples = (idx && w.reset_at)
       ? cycleSamples(X.data, idx, new Date(w.reset_at).getTime(), winMs) : null;
-    return windowOvershoot(w.used_percent, winMs, w.reset_at, samples);
+    return windowMargin(w.used_percent, winMs, w.reset_at, samples);
   }));
 }
 
 function paint(el, ms) {
-  const txt = fmtOvershoot(ms);
+  const txt = fmtMargin(ms);
   el.textContent = txt == null ? "–" : txt;
-  // + means you run out before the reset, so + is the red one.
-  el.classList.toggle("bad", txt != null && ms > 0);
-  el.classList.toggle("good", txt != null && ms <= 0);
+  el.classList.toggle("bad", txt != null && ms < 0);
+  el.classList.toggle("good", txt != null && ms >= 0);
 }
 
 // The pill's width shifts a little as units change (40m → 5.4h → 2.2d), so the
@@ -86,8 +85,8 @@ function reportSize() {
 }
 
 function render() {
-  paint($("cVal"), claudeOvershoot());
-  paint($("xVal"), codexOvershoot());
+  paint($("cVal"), claudeMargin());
+  paint($("xVal"), codexMargin());
   reportSize();
 }
 
@@ -127,4 +126,4 @@ function connect() {
 }
 
 connect();
-setInterval(render, 1000);   // the overshoot moves in real time between samples
+setInterval(render, 1000);   // the margin shrinks in real time between samples
