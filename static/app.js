@@ -82,8 +82,17 @@ function cursorTime() {
       const i = u.cursor.idx;
       if (i == null) { el.style.display = "none"; return; }
       el.style.display = "";
-      el.textContent = new Date(u.data[0][i] * 1000).toLocaleString([], {
-        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+      const parts = [new Date(u.data[0][i] * 1000).toLocaleString([], {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })];
+      // Rows are [x, ...real(N), ...proj(N), ...lo(N), ...hi(N)]. Past the last
+      // sample the real row is null, so fall through to its projection twin.
+      const N = (u.series.length - 1) / 4;
+      for (let j = 1; j <= N; j++) {
+        if (!u.series[j].show) continue;
+        const v = u.data[j][i] ?? u.data[j + N][i];
+        if (v != null) parts.push(`${u.series[j].label} ${Math.round(v)}%`);
+      }
+      el.textContent = parts.join(" · ");
       el.style.left = Math.max(0, Math.min(u.over.clientWidth, u.cursor.left)) + "px";
     },
   } };
@@ -965,7 +974,7 @@ window.addEventListener("load", () => {
     [nowDivider()]);
   // Codex has no real 5-hour limit (its 5-hour "Spark" window is feature-specific
   // and usually 0), so hide that series.
-  X.chart = makeChart("cxChart", [{ label: "primary", color: "--cx1", show: false }, { label: "secondary", color: "--sd" }],
+  X.chart = makeChart("cxChart", [{ label: "5h", color: "--cx1", show: false }, { label: "7d", color: "--sd" }],
     [nowDivider()]);
   observeSize("chart", () => C.chart);
   observeSize("cxChart", () => X.chart);
