@@ -562,9 +562,8 @@ function renderCost() {
 }
 
 // Priciest chats as bars: x is when the chat started, y is that chat's share of
-// its own model's all-time spend. Percent rather than dollars because the rates
-// are assumptions while the shares are not — so bars are comparable within a
-// model, not across them.
+// its provider's all-time spend. Percent rather than dollars because the rates
+// are assumptions while the shares are not.
 function renderTopChats() {
   const rows = [
     ...((ccClaude && ccClaude.top) || []).map((r) => ({ ...r, src: "Claude" })),
@@ -581,7 +580,7 @@ function renderTopChats() {
   $("ccTop").innerHTML =
     `<div class="cc-bars">${bars}</div><div id="ccTip" hidden></div>` +
     `<div class="cc-axis muted"><span>${span[0]}</span>` +
-    `<span>peak ${max.toFixed(1)}% of one model's spend</span><span>${span[1]}</span></div>`;
+    `<span>peak ${max.toFixed(1)}% of a provider's spend</span><span>${span[1]}</span></div>`;
 }
 
 let ccBars = [];
@@ -607,7 +606,7 @@ function wireChatTip() {
     if (r.end) rows_.push(["ran for", fmtDur((new Date(r.end) - when) / 1000)]);
     if (r.branch) rows_.push(["branch", r.branch]);
     if (r.calls) rows_.push(["API calls", r.calls.toLocaleString()]);
-    rows_.push(["share of " + r.model, r.pct.toFixed(1) + "%"]);
+    rows_.push(["share of " + r.src, r.pct.toFixed(1) + "%"]);
     rows_.push(["API-equivalent", fmtMoney(r.cost)]);
     tip.innerHTML =
       `<div class="tip-t">${esc(r.title || r.label)}</div>` +

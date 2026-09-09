@@ -213,17 +213,17 @@ def _label(f: str) -> str:
     return d or os.path.basename(f)[:8]
 
 
-def top_sessions(st: dict, pricing: dict, by_model: dict, n: int = 40) -> list:
+def top_sessions(st: dict, pricing: dict, grand_total: float, n: int = 40) -> list:
     out = []
     for f, sess in (st.get("sessions") or {}).items():
         total, by_model_s, _ = _cost(sess.get("m") or {}, pricing)
         if total <= 0:
             continue
         model = max(by_model_s, key=by_model_s.get)
-        # Share of that model's own all-time spend. Bars are comparable within a
-        # model, not across them — the dollar rates are assumptions, the shares
-        # are not.
-        pct = 100.0 * total / by_model[model] if by_model.get(model) else 0.0
+        # Share of this provider's whole all-time spend. Numerator and denominator
+        # both cover every model, so a chat that mixed models is still counted
+        # exactly once — which a per-model denominator could not do.
+        pct = 100.0 * total / grand_total if grand_total else 0.0
         out.append({"label": _label(f), "when": sess.get("t"), "cost": total,
                     "model": model, "pct": pct, "title": sess.get("title"),
                     "branch": sess.get("branch"), "calls": sess.get("calls", 0),
@@ -243,7 +243,7 @@ def snapshot(st: dict) -> dict:
         "total": total, "d7": d7, "d1": d1,
         "by_model": [{"model": m, "cost": c} for m, c in top],
         "by_component": comp,
-        "top": top_sessions(st, pricing, by_model),
+        "top": top_sessions(st, pricing, total),
     }
 
 

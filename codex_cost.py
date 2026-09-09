@@ -194,7 +194,7 @@ def _window(buckets: dict, since_hour: int) -> dict:
     return agg
 
 
-def top_sessions(st: dict, pricing: dict, by_model: dict, n: int = 40) -> list:
+def top_sessions(st: dict, pricing: dict, grand_total: float, n: int = 40) -> list:
     """Codex logs carry no project or title — the rollout filename's timestamp
     is the only handle on a session."""
     out = []
@@ -203,8 +203,8 @@ def top_sessions(st: dict, pricing: dict, by_model: dict, n: int = 40) -> list:
         if total <= 0:
             continue
         model = max(by_model_s, key=by_model_s.get)
-        # Share of that model's own all-time spend (see ccost.top_sessions).
-        pct = 100.0 * total / by_model[model] if by_model.get(model) else 0.0
+        # Share of this provider's whole all-time spend (see ccost.top_sessions).
+        pct = 100.0 * total / grand_total if grand_total else 0.0
         cwd = sess.get("cwd") or ""
         out.append({"label": os.path.basename(cwd) or os.path.basename(f)[8:24].replace("T", " "),
                     "when": sess.get("t"), "cost": total, "model": model, "pct": pct,
@@ -226,7 +226,7 @@ def snapshot(st: dict) -> dict:
         "total": total, "d7": d7, "d1": d1,
         "by_model": [{"model": m, "cost": c} for m, c in top],
         "by_component": comp,
-        "top": top_sessions(st, pricing, by_model),
+        "top": top_sessions(st, pricing, total),
     }
 
 
