@@ -6,9 +6,8 @@ Claude Code logs every API response's exact token counts to
 them at Claude API list rates to get an "if this were pay-as-you-go" dollar
 figure. The token counts are exact; only the $ rates are assumptions.
 
-Rates for the newest models are guesses (past training data) — override them by
-dropping a JSON like {"opus": {"in": 15, "out": 75}} at
-~/.claude-usage/pricing.json.
+Rates track the published API list prices; override them by dropping a JSON like
+{"opus": {"in": 5, "out": 25}} at ~/.claude-usage/pricing.json.
 
 Nothing here is subscription billing; it's a comparison estimate.
 """
@@ -26,11 +25,14 @@ CACHE = os.path.expanduser("~/.claude-usage/ccost.json")
 PRICING_OVERRIDE = os.path.expanduser("~/.claude-usage/pricing.json")
 
 # per-MTok (input, output). Cache: read 0.10x, write-5m 1.25x, write-1h 2.0x of input.
+# Current published API list rates. NOTE these are per-TIER: Opus 5 / 4.8 / 4.7 /
+# 4.6 are all $5/$25, but Opus 4.1 and older were $15/$75 — sessions on those are
+# under-priced here. Override per model tier in ~/.claude-usage/pricing.json.
 DEFAULT_PRICING = {
-    "opus":   {"in": 15.0, "out": 75.0},
-    "sonnet": {"in": 3.0,  "out": 15.0},
+    "opus":   {"in": 5.0,  "out": 25.0},
+    "sonnet": {"in": 2.0,  "out": 10.0},
     "haiku":  {"in": 1.0,  "out": 5.0},
-    "fable":  {"in": 3.0,  "out": 15.0},   # unknown tier — assumed Sonnet-class
+    "fable":  {"in": 10.0, "out": 50.0},
 }
 CACHE_READ, CACHE_W5, CACHE_W1H = 0.10, 1.25, 2.0
 
@@ -80,7 +82,7 @@ def _add(dst: dict, u: dict):
         dst["c5m"] = dst.get("c5m", 0) + (u.get("cache_creation_input_tokens") or 0)
 
 
-CACHE_V = 3          # bump to force a full rescan when the shape changes
+CACHE_V = 5          # bump to force a full rescan when the shape changes
 
 
 def _load() -> dict:
@@ -126,6 +128,12 @@ def refresh() -> dict:
                 files[f] = size               # truncation guard: don't re-read
             continue
         sess = sessions.setdefault(f, {"t": None, "m": {}})
+        # Claude Code writes one record per content block (thinking / text /
+        # tool_use), and every one repeats the SAME message.usage for the whole
+        # response — so counting each record double-billed a turn 2-3x. Seeded
+        # from the tail of the previous scan, because a response's blocks can
+        # straddle a poll boundary.
+        seen = set(sess.get("seen") or [])
         try:
             with open(f, "r", errors="ignore") as fh:
                 fh.seek(off)
@@ -146,6 +154,12 @@ def refresh() -> dict:
                     model = msg.get("model")
                     if not model or _tier(model) is None or not isinstance(u, dict):
                         continue
+                    mid = msg.get("id")
+                    if mid:
+                        if mid in seen:
+                            continue
+                        seen.add(mid)
+                        sess["seen"] = (sess.get("seen") or [])[-15:] + [mid]
                     _add(alltime.setdefault(model, {}), u)
                     _add(sess["m"].setdefault(model, {}), u)
                     if sess["t"] is None:
