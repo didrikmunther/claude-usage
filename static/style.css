@@ -74,7 +74,8 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
   padding: 1px 5px; border-radius: 5px;
 }
 
-#ccTop { margin-top: 14px; position: relative; }
+.cc-seg { margin-top: 14px; }
+#ccTop { margin-top: 10px; position: relative; }
 #ccTip {
   /* Inside the bar area, not above it — anchoring to the card's top edge would
      push the box out of the card and get it clipped. */

@@ -565,25 +565,56 @@ function renderCost() {
 // its provider's all-time spend. Percent rather than dollars because the rates
 // are assumptions while the shares are not.
 function renderTopChats() {
+  const k = ccMode === "today" ? "today" : "top";
   const rows = [
-    ...((ccClaude && ccClaude.top) || []).map((r) => ({ ...r, src: "Claude" })),
-    ...((ccCodex && ccCodex.top) || []).map((r) => ({ ...r, src: "Codex" })),
-  ].filter((r) => r.pct > 0).sort((a, b) => new Date(a.when) - new Date(b.when));
-  if (!rows.length) { $("ccTop").innerHTML = ""; return; }
+    ...((ccClaude && ccClaude[k]) || []).map((r) => ({ ...r, src: "Claude" })),
+    ...((ccCodex && ccCodex[k]) || []).map((r) => ({ ...r, src: "Codex" })),
+  ].filter((r) => r.pct > 0);
+  // Today's chats all share one date, so an x axis of dates says nothing —
+  // rank them by spend instead. Across all history the date is the point.
+  rows.sort(ccMode === "today"
+    ? (a, b) => b.pct - a.pct
+    : (a, b) => new Date(a.when) - new Date(b.when));
+  if (!rows.length) {
+    $("ccTop").innerHTML = `<div class="muted">no chats today yet</div>`;
+    return;
+  }
   const max = Math.max(...rows.map((r) => r.pct));
   ccBars = rows;
   const bars = rows.map((r, i) =>
     `<div class="cc-bar ${r.src === "Codex" ? "cx" : "cl"}" data-i="${i}"` +
     ` style="height:${(r.pct / max) * 100}%"></div>`).join("");
-  const span = [rows[0], rows[rows.length - 1]].map((r) =>
-    new Date(r.when).toLocaleDateString([], { month: "short", day: "numeric" }));
+  const ends = ccMode === "today"
+    ? ["most spent", "least"]
+    : [rows[0], rows[rows.length - 1]].map((r) =>
+        new Date(r.when).toLocaleDateString([], { month: "short", day: "numeric" }));
+  const mid = ccMode === "today"
+    ? `${rows.length} chats today · ${fmtMoney(rows.reduce((a, r) => a + r.cost, 0))}`
+    : "";
   $("ccTop").innerHTML =
     `<div class="cc-bars">${bars}</div><div id="ccTip" hidden></div>` +
-    `<div class="cc-axis muted"><span>${span[0]}</span>` +
-    `<span>peak ${max.toFixed(1)}% of a provider's spend</span><span>${span[1]}</span></div>`;
+    `<div class="cc-axis muted"><span>${ends[0]}</span>` +
+    `<span>${mid}</span><span>${ends[1]}</span></div>`;
 }
 
 let ccBars = [];
+let ccMode = localStorage.getItem("ccMode") === "today" ? "today" : "all";
+
+function wireChatMode() {
+  const seg = $("ccMode");
+  if (!seg) return;
+  const paint = () => seg.querySelectorAll("button").forEach(
+    (b) => b.classList.toggle("on", b.dataset.m === ccMode));
+  paint();
+  seg.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    ccMode = b.dataset.m;
+    localStorage.setItem("ccMode", ccMode);
+    paint();
+    renderTopChats();
+  });
+}
 function wireChatTip() {
   const host = $("ccTop");
   if (!host) return;
@@ -1045,6 +1076,7 @@ window.addEventListener("load", () => {
   wireForecastModel();
   wireAccuracy();
   wireChatTip();
+  wireChatMode();
   wireUpdate();
   wireCheckUpdate();
   claudeGauge = makeGauge("claudeGauge", [0.3, 0.6]);   // 0–100 %/h dial, red from 60

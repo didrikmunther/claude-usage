@@ -194,11 +194,25 @@ def _window(buckets: dict, since_hour: int) -> dict:
     return agg
 
 
-def top_sessions(st: dict, pricing: dict, grand_total: float, n: int = 40) -> list:
+def _today(ts: str | None) -> bool:
+    """Was this session still running today, in local time?"""
+    if not ts:
+        return False
+    try:
+        d = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
+    except ValueError:
+        return False
+    return d.date() == datetime.date.today()
+
+
+def top_sessions(st: dict, pricing: dict, grand_total: float, n: int = 40,
+                 today: bool = False) -> list:
     """Codex logs carry no project or title — the rollout filename's timestamp
     is the only handle on a session."""
     out = []
     for f, sess in (st.get("sessions") or {}).items():
+        if today and not _today(sess.get("end") or sess.get("t")):
+            continue
         total, by_model_s, _ = _cost(sess.get("m") or {}, pricing)
         if total <= 0:
             continue
@@ -227,6 +241,7 @@ def snapshot(st: dict) -> dict:
         "by_model": [{"model": m, "cost": c} for m, c in top],
         "by_component": comp,
         "top": top_sessions(st, pricing, total),
+        "today": top_sessions(st, pricing, total, today=True),
     }
 
 
