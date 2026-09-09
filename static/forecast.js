@@ -91,15 +91,35 @@ function windowMargin(cur, winMs, resetIso, samples) {
   return now + ((100 - cur) / perSec) * 1000 - resetMs;
 }
 
-// A margin as the pill renders it: "-2.2d", "+5.4h", "-40m", "+∞".
+// A margin as the pill renders it, whole units only: "-2d", "+5h", "-40m", "+∞".
 function fmtMargin(ms) {
   if (ms == null) return null;
   if (!isFinite(ms)) return "+∞";
   const sign = ms < 0 ? "-" : "+";
+  // Floored, never rounded: on a pill you want the number you have definitely
+  // still got. "2d" with 2.9 days left is pessimistic; "3d" with 2.1 would be a
+  // small lie in the direction that matters.
   const sec = Math.abs(ms) / 1000;
-  if (sec >= 86400) return sign + (sec / 86400).toFixed(1) + "d";
-  if (sec >= 3600) return sign + (sec / 3600).toFixed(1) + "h";
-  return sign + Math.round(sec / 60) + "m";
+  if (sec >= 86400) return sign + Math.floor(sec / 86400) + "d";
+  if (sec >= 3600) return sign + Math.floor(sec / 3600) + "h";
+  return sign + Math.floor(sec / 60) + "m";
+}
+
+// Where this window lands, as a percentage of the limit, at the moment it
+// resets — at the current forward pace. This is what the pill shows whenever the
+// reset arrives before you run out: "32%" reads better than "+5.6d of slack",
+// because it answers the question you actually have (how much will I have used?)
+// rather than restating the same fact as a duration. Clamped to [0, 100].
+function projectedAtReset(cur, winMs, resetIso, samples) {
+  if (cur == null) return null;
+  const resetMs = resetIso ? new Date(resetIso).getTime() : null;
+  if (resetMs == null) return null;
+  const now = Date.now();
+  const elapsed = now - (resetMs - winMs);
+  if (elapsed < MIN_ELAPSED_MS) return null;      // too soon after a reset to mean anything
+  const { perSec } = pace(cur, elapsed, winMs, samples, now);
+  const proj = cur + Math.max(0, perSec) * ((resetMs - now) / 1000);
+  return Math.max(0, Math.min(100, proj));
 }
 
 // Forecast for one window. "already used" (cur%) stays anchored to the reset; the
@@ -142,5 +162,5 @@ function forecast(cur, winMs, resetIso, samples) {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { MIN_ELAPSED_MS, fmtDur, fmtClock, recentSlope, cycleSamples,
-                     pace, windowMargin, fmtMargin, forecast };
+                     pace, windowMargin, fmtMargin, projectedAtReset, forecast };
 }

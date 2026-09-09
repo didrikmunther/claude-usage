@@ -7,21 +7,29 @@
   /* Modelled on reflect-mono's quick-pill: 46px tall, fully rounded, dark
      gradient with a hairline top highlight and a long soft shadow. Deliberately
      dark in both themes — like the original, it is an overlay, not a document. */
+  :root {
+    /* Overall pill scale. Every dimension below is expressed against it, so
+       resizing the widget is this one number rather than a dozen edits. */
+    --s: 0.8;
+  }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; overflow: hidden; background: transparent; }
   body {
-    font: 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    /* Split from the `font` shorthand: calc() is not valid inside it. */
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    font-size: calc(13px * var(--s));
+    line-height: 1;
     -webkit-user-select: none; user-select: none;
     cursor: default;
   }
   #root {
     height: 100%;
     display: flex; align-items: center; justify-content: flex-start;
-    padding: 8px;
+    padding: calc(8px * var(--s));
   }
   #pill {
-    height: 46px;
-    border-radius: 24px;
+    height: calc(46px * var(--s));
+    border-radius: calc(24px * var(--s));
     background: linear-gradient(180deg, #1c1c1c 0%, #111 100%);
     border: 1px solid rgba(255, 255, 255, 0.08);
     /* No outer drop shadow: harmless at rest, but once hover takes the pill to
@@ -29,8 +37,8 @@
        still lifts the top edge. */
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
     display: inline-flex; align-items: center;
-    gap: 14px;
-    padding: 0 16px;
+    gap: calc(14px * var(--s));
+    padding: 0 calc(16px * var(--s));
     white-space: nowrap;
     /* Near-invisible at rest, solid the moment you point at it. `.hover` is set
        natively: the drag overlay eats mouse events so the page never sees CSS
@@ -40,14 +48,23 @@
   }
   html.hover #pill { opacity: 1; }
 
-  .item { display: inline-flex; align-items: center; gap: 7px; }
-  .mark { width: 15px; height: 15px; flex: 0 0 15px; display: block; }
+  .item { display: inline-flex; align-items: center; gap: calc(7px * var(--s)); }
+  .mark { width: calc(15px * var(--s)); height: calc(15px * var(--s));
+          flex: 0 0 calc(15px * var(--s)); display: block; }
   .val {
     /* Tabular + a floor width so the pill does not twitch as digits change. */
     font-variant-numeric: tabular-nums;
-    font-size: 13px; font-weight: 590; letter-spacing: -0.01em;
-    min-width: 46px;
+    font-size: calc(13px * var(--s)); font-weight: 590; letter-spacing: -0.01em;
+    min-width: calc(46px * var(--s));
     color: rgba(255, 255, 255, 0.55);
+  }
+  /* Which window the number refers to, raised like an exponent. Muted and
+     small so it annotates the number without competing with it. */
+  .val .win {
+    font-size: 0.62em; font-weight: 500;
+    vertical-align: super; line-height: 0;
+    opacity: 0.6; margin-left: 1.5px;
+    letter-spacing: 0;
   }
   .val.bad { color: #ff6b6b; }
   .val.good { color: #4ade80; }

@@ -4,11 +4,14 @@
 //
 //   <claude mark> -2.2d      <codex mark> +5.4h
 //
-// The number is the margin (see windowMargin in forecast.js): how long before
-// the reset you run out (negative, red), or how much slack the reset gives you
-// (positive, green). Per platform it is the WORST of that platform's windows —
-// the one actually constraining you — so a 5-hour crunch can't hide behind a
-// comfortable weekly number.
+// Two readings, depending on which way the window is going:
+//   heading over  → "-2.2d" in red: you run out this long BEFORE the reset
+//   staying under → "32%" in green: what you will have used when it resets
+// The duration only carries information when you are going to overrun; once you
+// are safe, the useful question is how much of the limit you will have spent.
+// Per platform it is the WORST of that platform's windows — the one actually
+// constraining you — so a 5-hour crunch can't hide behind a comfortable weekly
+// number.
 //
 // It keeps the same rolling sample buffers the dashboard does, because the pace
 // behind the margin needs this cycle's samples; the live payload alone only
@@ -19,8 +22,8 @@ const MAX_POINTS = 20000;
 
 // series = index into C.data for the recent-rate method (null → cycle average).
 const CLAUDE_WIN = [
-  { key: "fh", reset: "five_hour", winMs: 5 * 3600e3, series: 1 },
-  { key: "sd", reset: "seven_day", winMs: 7 * 24 * 3600e3, series: null },
+  { key: "fh", reset: "five_hour", winMs: 5 * 3600e3, series: 1, label: "5h" },
+  { key: "sd", reset: "seven_day", winMs: 7 * 24 * 3600e3, series: null, label: "7d" },
 ];
 const CX_SERIES = { "5-hour": 1 };        // only Codex's 5-hour uses the recent rate
 
@@ -36,39 +39,64 @@ function push(st, tsSec, a, b) {
   }
 }
 
-// Smallest margin across a platform's windows — the binding constraint. null
-// when no window has anything trustworthy to say yet.
-function worst(margins) {
-  const known = margins.filter((m) => m != null);
-  return known.length ? Math.min(...known) : null;
+// The binding window: the one with the smallest margin. Overrunning windows sort
+// worst automatically (negative beats positive), and among safe ones the tightest
+// margin is also the one landing highest, so a single ordering serves both
+// readings. null when no window has anything trustworthy to say yet.
+function worst(rows) {
+  const known = rows.filter((r) => r && r.margin != null);
+  if (!known.length) return null;
+  return known.reduce((a, b) => (b.margin < a.margin ? b : a));
 }
 
-function claudeMargin() {
+function claudeOutlook() {
   if (!C.last) return null;
   return worst(CLAUDE_WIN.map((w) => {
     const resetIso = C.resets[w.reset];
     const samples = (w.series && resetIso)
       ? cycleSamples(C.data, w.series, new Date(resetIso).getTime(), w.winMs) : null;
-    return windowMargin(C.last[w.key], w.winMs, resetIso, samples);
+    const cur = C.last[w.key];
+    return {
+      margin: windowMargin(cur, w.winMs, resetIso, samples),
+      pct: projectedAtReset(cur, w.winMs, resetIso, samples),
+      label: w.label,           // which reset this number is about
+    };
   }));
 }
 
-function codexMargin() {
+function codexOutlook() {
   if (!X.last) return null;
   return worst((X.last.windows || []).map((w) => {
     const idx = CX_SERIES[w.label] || null;
     const winMs = (w.window_seconds || 0) * 1000;
     const samples = (idx && w.reset_at)
       ? cycleSamples(X.data, idx, new Date(w.reset_at).getTime(), winMs) : null;
-    return windowMargin(w.used_percent, winMs, w.reset_at, samples);
+    return {
+      margin: windowMargin(w.used_percent, winMs, w.reset_at, samples),
+      pct: projectedAtReset(w.used_percent, winMs, w.reset_at, samples),
+    };
   }));
 }
 
-function paint(el, ms) {
-  const txt = fmtMargin(ms);
+function paint(el, o) {
+  const over = o != null && o.margin != null && o.margin < 0;
+  let txt = null;
+  if (o != null && o.margin != null) {
+    // Overrunning: how long before the reset you run out. Safe: where you land.
+    txt = over ? fmtMargin(o.margin)
+               : (o.pct == null ? null : Math.floor(o.pct) + "%");
+  }
   el.textContent = txt == null ? "–" : txt;
-  el.classList.toggle("bad", txt != null && ms < 0);
-  el.classList.toggle("good", txt != null && ms >= 0);
+  // Which of the platform's windows this number is about, set as a superscript.
+  // Built with the DOM rather than innerHTML so the label is never parsed as markup.
+  if (txt != null && o && o.label) {
+    const sup = document.createElement("sup");
+    sup.className = "win";
+    sup.textContent = o.label;
+    el.appendChild(sup);
+  }
+  el.classList.toggle("bad", txt != null && over);
+  el.classList.toggle("good", txt != null && !over);
 }
 
 // The pill's width shifts a little as units change (40m → 5.4h → 2.2d), so the
@@ -85,8 +113,8 @@ function reportSize() {
 }
 
 function render() {
-  paint($("cVal"), claudeMargin());
-  paint($("xVal"), codexMargin());
+  paint($("cVal"), claudeOutlook());
+  paint($("xVal"), codexOutlook());
   reportSize();
 }
 

@@ -83,9 +83,12 @@ test("forecast calls out an untouched cycle", () => {
 const { windowMargin, fmtMargin } = mod;
 
 test("fmtMargin picks a unit and always carries a sign", () => {
-  assert.equal(fmtMargin(-2.2 * 24 * H), "-2.2d");
-  assert.equal(fmtMargin(5.4 * H), "+5.4h");
+  // Whole units only — floored, so a partial unit is never rounded up.
+  assert.equal(fmtMargin(-2.2 * 24 * H), "-2d");
+  assert.equal(fmtMargin(-2.9 * 24 * H), "-2d");
+  assert.equal(fmtMargin(5.4 * H), "+5h");
   assert.equal(fmtMargin(-40 * 60e3), "-40m");
+  assert.equal(fmtMargin(-59.9 * 60e3), "-59m");
   assert.equal(fmtMargin(Infinity), "+∞");
   assert.equal(fmtMargin(null), null);
 });
@@ -108,7 +111,7 @@ test("margin is positive when the reset arrives first", () => {
   // 4h into a 5h window at 20%: 5%/h needs 16h more, but the reset is in 1h.
   const m = windowMargin(20, 5 * H, resetIn(1), null);
   assert.ok(m > 0, `expected positive, got ${m}`);
-  assert.match(fmtMargin(m), /^\+1[0-9]\.\d h?|^\+\d+\.\dh$/);
+  assert.match(fmtMargin(m), /^\+\d+h$/);   // whole hours, no decimal
 });
 
 test("an idle cycle never runs out", () => {
@@ -127,4 +130,45 @@ test("already at the limit reads as negative by the time still to serve", () => 
   assert.ok(m < 0);
   // ~2h of the window left to sit out.
   assert.ok(Math.abs(m + 2 * H) < 60e3, `expected ~-2h, got ${m / H}h`);
+});
+
+
+// ---- projectedAtReset: what the pill shows while you are still safe -------
+const { projectedAtReset } = mod;
+
+test("projectedAtReset extrapolates the current pace to the reset", () => {
+  // 4h into a 5h window at 20% => 5%/h, 1h left => lands at ~25%.
+  const p = projectedAtReset(20, 5 * H, resetIn(1), null);
+  assert.ok(Math.abs(p - 25) < 0.5, `expected ~25%, got ${p}`);
+});
+
+test("projectedAtReset clamps to 100 rather than reporting nonsense", () => {
+  // 4h into a 5h window at 85% => ~21%/h would notionally reach 106%.
+  assert.equal(projectedAtReset(85, 5 * H, resetIn(1), null), 100);
+});
+
+test("with no recent samples it extends the cycle average", () => {
+  // 12% over the 4h elapsed is 3%/h, and there is 1h left: 12 -> 15, not 12.
+  // pace() is max(recent, average), and the average is never zero once anything
+  // has been used — so "flat from here" is deliberately not on offer.
+  assert.equal(projectedAtReset(12, 5 * H, resetIn(1), null), 15);
+});
+
+test("an untouched cycle lands at zero", () => {
+  assert.equal(projectedAtReset(0, 5 * H, resetIn(1), null), 0);
+});
+
+test("projectedAtReset stays silent when it cannot know", () => {
+  assert.equal(projectedAtReset(null, 5 * H, resetIn(1), null), null);
+  assert.equal(projectedAtReset(30, 5 * H, null, null), null);
+  assert.equal(projectedAtReset(3, 5 * H, resetIn(4 + 55 / 60), null), null);  // just reset
+});
+
+test("the two readings agree about which side of the limit you are on", () => {
+  // Safe: margin positive, and the projection lands under 100.
+  assert.ok(windowMargin(20, 5 * H, resetIn(1), null) > 0);
+  assert.ok(projectedAtReset(20, 5 * H, resetIn(1), null) < 100);
+  // Overrunning: margin negative, and the projection is pinned at the limit.
+  assert.ok(windowMargin(85, 5 * H, resetIn(1), null) < 0);
+  assert.equal(projectedAtReset(85, 5 * H, resetIn(1), null), 100);
 });

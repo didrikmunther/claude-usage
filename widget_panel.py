@@ -48,8 +48,8 @@ PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "44405"))
 BASE = f"http://127.0.0.1:{PORT}"
 
 # Starting size only; the page measures its pill and reports the real one.
-# Height mirrors reflect-mono's quick-pill (46pt pill + 8pt padding each side).
-W, H = 210, 62
+# Mirrors reflect-mono's quick-pill at the widget's --s scale (0.8).
+W, H = 168, 50
 MIN_W, MAX_W = 80, 620   # clamps, so a broken page can't produce a silly panel
 MIN_H, MAX_H = 40, 200
 MARGIN = 24              # inset from the screen corner on first run
