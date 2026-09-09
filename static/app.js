@@ -489,6 +489,7 @@ function wireForecastModel() {
     forecastModel = sel.value;
     localStorage.setItem("forecastModel", forecastModel);
     applyRangeAll();                   // rebuild the projection with the chosen predictor
+    accLast = 0; scoreForecasts();     // re-mark which row is "in use"
   });
 }
 
@@ -632,6 +633,7 @@ function connect() {
       setIntervalUI(m.interval);
       setStatus(m.status);
       updateGauges();                       // set targets from history before revving
+      scoreForecasts();
       if (!revvedOnce) { revvedOnce = true; window.revGauges(); }
     } else if (m.type === "sample") {
       if (m.claude) { pushPoint(C, m.claude.ts / 1000, m.claude.fh, m.claude.sd); renderClaude(m.claude); }
@@ -827,6 +829,92 @@ function checkStale() {
   setDots("err");
 }
 
+// ---- forecast accuracy (backtest) ----
+// Replays every predictor across the whole history: train only on samples up to
+// an origin, predict forward, compare against what actually happened. The unit
+// is percentage points of the limit, split by how far ahead the forecast looked,
+// because a model that is fine an hour out and hopeless twelve hours out is
+// worth telling apart. Runs in a worker — it is ~1s of arithmetic.
+const ACC_ORIGIN_STEP = 4 * 3600;      // one evaluation origin per 4h of history
+const ACC_REFRESH_MS = 10 * 60e3;      // history barely moves; recompute rarely
+let accWorker = null, accLast = 0;
+// Off by default, and it gates the computation as well as the panel — no point
+// spending a second of worker time on a table nobody is looking at.
+let showAccuracy = localStorage.getItem("showAccuracy") === "1";
+
+function scoreForecasts() {
+  if (!showAccuracy) return;
+  const ts = C.data[0], ys = C.data[1];
+  if (!ts || ts.length < 60) return;
+  if (Date.now() - accLast < ACC_REFRESH_MS) return;
+  accLast = Date.now();
+  if (!accWorker) {
+    try {
+      accWorker = new Worker("/static/accuracy.worker.js");
+    } catch {
+      return;                          // no worker → quietly skip; the panel stays hidden
+    }
+    accWorker.onmessage = (e) => renderAccuracy(e.data);
+  }
+  const samples = [];
+  for (let i = 0; i < ts.length; i++) if (ys[i] != null) samples.push({ t: ts[i], y: ys[i] });
+  accWorker.postMessage({
+    samples,
+    opts: { originStep: ACC_ORIGIN_STEP, reset: panelResets(C).a },
+  });
+}
+
+function renderAccuracy(msg) {
+  const card = $("accuracy"), body = $("accBody");
+  if (!card || !body) return;
+  if (!showAccuracy) { card.hidden = true; return; }
+  if (!msg || !msg.ok || !msg.result || !Object.keys(msg.result.models).length) {
+    card.hidden = true;
+    return;
+  }
+  const { models, horizons, origins } = msg.result;
+  // Best (lowest) error per column, so the winner is readable at a glance.
+  const best = {};
+  for (const h of horizons) {
+    for (const row of Object.values(models)) {
+      if (row[h] == null) continue;
+      if (best[h] == null || row[h] < best[h]) best[h] = row[h];
+    }
+  }
+  const head = `<tr><th>model</th>${horizons.map((h) => `<th>+${h / 3600}h</th>`).join("")}</tr>`;
+  const rows = Object.entries(models).map(([name, row]) => {
+    const cells = horizons.map((h) => {
+      if (row[h] == null) return `<td>–</td>`;
+      const cls = Math.abs(row[h] - best[h]) < 1e-9 ? ' class="best"' : "";
+      return `<td${cls}>${row[h].toFixed(1)}</td>`;
+    }).join("");
+    return `<tr${name === forecastModel ? ' class="active"' : ""}><td>${name}</td>${cells}</tr>`;
+  }).join("");
+  body.innerHTML =
+    `<table class="acc-tbl"><thead>${head}</thead><tbody>${rows}</tbody></table>` +
+    `<div class="acc-foot muted">mean absolute error in percentage points on the 5-hour ` +
+    `series — lower is better. ${origins} origins replayed across all history.</div>`;
+  card.hidden = false;
+}
+
+function wireAccuracy() {
+  const cb = $("accToggle");
+  if (!cb) return;
+  cb.checked = showAccuracy;
+  cb.addEventListener("change", () => {
+    showAccuracy = cb.checked;
+    localStorage.setItem("showAccuracy", showAccuracy ? "1" : "0");
+    if (showAccuracy) {
+      $("accBody").textContent = "scoring…";
+      $("accuracy").hidden = false;
+      accLast = 0;                       // recompute now rather than on the next tick
+      scoreForecasts();
+    } else {
+      $("accuracy").hidden = true;
+    }
+  });
+}
+
 function tick() {
   checkStale();
   renderClaudeResets();
@@ -836,6 +924,7 @@ function tick() {
   });
   renderCodexForecast();
   updateGauges();
+  scoreForecasts();                       // self-throttled to ACC_REFRESH_MS
 }
 
 // ---- boot ----
@@ -862,6 +951,7 @@ window.addEventListener("load", () => {
   wireControls();
   wireRange();
   wireForecastModel();
+  wireAccuracy();
   wireUpdate();
   wireCheckUpdate();
   claudeGauge = makeGauge("claudeGauge", [0.3, 0.6]);   // 0–100 %/h dial, red from 60

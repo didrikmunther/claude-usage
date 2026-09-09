@@ -112,6 +112,14 @@
       </section>
     </div>
 
+    <section class="card acc" id="accuracy" hidden>
+      <div class="acc-head">
+        <span class="cc-title">Forecast accuracy</span>
+        <span class="muted cc-sub" id="accSub">backtested against your own history</span>
+      </div>
+      <div id="accBody" class="acc-body muted">scoring…</div>
+    </section>
+
     <section class="card ccost" id="ccost" hidden>
       <div class="cc-head">
         <span class="cc-title">API-equivalent spend</span>
@@ -137,6 +145,9 @@
         <option value="cycle">Cycle</option>
         <option value="cycle+tod">Cycle + time of day</option>
       </select>
+      <label class="ctl-chk" title="Backtest every model against your own history">
+        <input id="accToggle" type="checkbox" />Accuracy
+      </label>
       <span id="updated" class="muted upd"></span>
       <button id="checkUpdate" class="btn">Check for updates</button>
       <span id="version" class="muted ver"></span>
@@ -146,6 +157,7 @@
   <script src="/static/vendor/uPlot.iife.min.js"></script>
   <script src="/static/predict.js"></script>
   <script src="/static/forecast.js"></script>
+  <script src="/static/accuracy.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
