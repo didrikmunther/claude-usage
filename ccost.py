@@ -80,11 +80,19 @@ def _add(dst: dict, u: dict):
         dst["c5m"] = dst.get("c5m", 0) + (u.get("cache_creation_input_tokens") or 0)
 
 
+CACHE_V = 3          # bump to force a full rescan when the shape changes
+
+
 def _load() -> dict:
     try:
-        return json.load(open(CACHE))
+        st = json.load(open(CACHE))
+        if st.get("v") == CACHE_V:
+            return st
     except Exception:
-        return {"files": {}, "alltime": {}, "buckets": {}}
+        pass
+    # Old cache: the per-file offsets would skip bytes we never aggregated
+    # per-session, so start clean rather than show half a history.
+    return {"v": CACHE_V, "files": {}, "alltime": {}, "buckets": {}, "sessions": {}}
 
 
 def _save(state: dict):
@@ -104,6 +112,7 @@ def refresh() -> dict:
     bytes appended since last time."""
     st = _load()
     files, alltime, buckets = st["files"], st["alltime"], st["buckets"]
+    sessions = st["sessions"]                 # one entry per log file == one chat
     changed = False
 
     for f in glob.glob(os.path.join(PROJECTS, "**", "*.jsonl"), recursive=True):
@@ -116,15 +125,21 @@ def refresh() -> dict:
             if size < off:
                 files[f] = size               # truncation guard: don't re-read
             continue
+        sess = sessions.setdefault(f, {"t": None, "m": {}})
         try:
             with open(f, "r", errors="ignore") as fh:
                 fh.seek(off)
                 for line in fh:
-                    if '"usage"' not in line:
+                    # Claude Code writes its own generated title for the session;
+                    # it is the only human summary anywhere in these logs.
+                    if '"usage"' not in line and '"ai-title"' not in line:
                         continue
                     try:
                         o = json.loads(line)
                     except ValueError:
+                        continue
+                    if o.get("type") == "ai-title":
+                        sess["title"] = o.get("aiTitle") or sess.get("title")
                         continue
                     msg = o.get("message") or {}
                     u = msg.get("usage")
@@ -132,6 +147,13 @@ def refresh() -> dict:
                     if not model or _tier(model) is None or not isinstance(u, dict):
                         continue
                     _add(alltime.setdefault(model, {}), u)
+                    _add(sess["m"].setdefault(model, {}), u)
+                    if sess["t"] is None:
+                        sess["t"] = o.get("timestamp")
+                    sess["end"] = o.get("timestamp") or sess.get("end")
+                    sess["calls"] = sess.get("calls", 0) + 1
+                    if o.get("gitBranch"):
+                        sess["branch"] = o["gitBranch"]
                     h = _hour(o.get("timestamp"))
                     if h is not None:
                         _add(buckets.setdefault(str(h), {}).setdefault(model, {}), u)
@@ -181,6 +203,35 @@ def _window(buckets: dict, since_hour: int) -> dict:
     return agg
 
 
+def _label(f: str) -> str:
+    """Claude Code names a project dir after its cwd: "-Users-me-projects-foo".
+    Drop the home prefix; there is no chat title in the logs to use instead."""
+    d = os.path.basename(os.path.dirname(f)).lstrip("-")
+    parts = d.split("-")
+    if len(parts) > 2 and parts[0] == "Users":
+        d = "-".join(parts[2:])
+    return d or os.path.basename(f)[:8]
+
+
+def top_sessions(st: dict, pricing: dict, by_model: dict, n: int = 40) -> list:
+    out = []
+    for f, sess in (st.get("sessions") or {}).items():
+        total, by_model_s, _ = _cost(sess.get("m") or {}, pricing)
+        if total <= 0:
+            continue
+        model = max(by_model_s, key=by_model_s.get)
+        # Share of that model's own all-time spend. Bars are comparable within a
+        # model, not across them — the dollar rates are assumptions, the shares
+        # are not.
+        pct = 100.0 * total / by_model[model] if by_model.get(model) else 0.0
+        out.append({"label": _label(f), "when": sess.get("t"), "cost": total,
+                    "model": model, "pct": pct, "title": sess.get("title"),
+                    "branch": sess.get("branch"), "calls": sess.get("calls", 0),
+                    "end": sess.get("end")})
+    out.sort(key=lambda x: -x["cost"])
+    return out[:n]
+
+
 def snapshot(st: dict) -> dict:
     pricing = _pricing()
     now_h = int(time.time() // 3600)
@@ -192,6 +243,7 @@ def snapshot(st: dict) -> dict:
         "total": total, "d7": d7, "d1": d1,
         "by_model": [{"model": m, "cost": c} for m, c in top],
         "by_component": comp,
+        "top": top_sessions(st, pricing, by_model),
     }
 
 

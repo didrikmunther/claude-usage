@@ -277,7 +277,7 @@ function renderConsumed() {
   const targets = [
     // {i} indexes into consumedInRange's [series1, series2]. Codex omits 5-hour.
     { st: C, el: "consumed", series: [{ i: 0, lbl: "5h", col: "--fh" }, { i: 1, lbl: "7d", col: "--sd" }] },
-    { st: X, el: "cxConsumed", series: [{ i: 1, lbl: "7d", col: "--sd" }] },
+    { st: X, el: "cxConsumed", series: [{ i: 1, lbl: "7d", col: "--cx2" }] },
   ];
   for (const t of targets) {
     const el = $(t.el);
@@ -390,7 +390,7 @@ function renderClaudeForecast() {
 // no data leaves an invisible ghost so both columns line up row-for-row.
 const CX_SLOTS = [
   { label: "5-hour", cls: "cx1" },
-  { label: "7-day",  cls: "sd" },   // same teal as Claude's 7-day
+  { label: "7-day",  cls: "cx2" },
 ];
 const GHOST_BAR = `<div class="bar-row placeholder" aria-hidden="true"><div class="bar-label">&nbsp;<span class="reset">&nbsp;</span></div><div class="track"></div><div class="pct"></div></div>`;
 const GHOST_PROG = `<div class="prog-row placeholder" aria-hidden="true"><span class="prog-label">&nbsp;</span><span class="prog-msg">&nbsp;</span><span class="prog-rate"></span></div>`;
@@ -558,6 +558,69 @@ function renderCost() {
   if (ccClaude) parts.push(`Claude <b>${fmtMoney(ccClaude.total)}</b>`);
   if (ccCodex) parts.push(`Codex <b>${fmtMoney(ccCodex.total)}</b>`);
   $("ccBreak").innerHTML = parts.join("  ·  ") + (parts.length ? "  · all-time" : "");
+  renderTopChats();
+}
+
+// Priciest chats as bars: x is when the chat started, y is that chat's share of
+// its own model's all-time spend. Percent rather than dollars because the rates
+// are assumptions while the shares are not — so bars are comparable within a
+// model, not across them.
+function renderTopChats() {
+  const rows = [
+    ...((ccClaude && ccClaude.top) || []).map((r) => ({ ...r, src: "Claude" })),
+    ...((ccCodex && ccCodex.top) || []).map((r) => ({ ...r, src: "Codex" })),
+  ].filter((r) => r.pct > 0).sort((a, b) => new Date(a.when) - new Date(b.when));
+  if (!rows.length) { $("ccTop").innerHTML = ""; return; }
+  const max = Math.max(...rows.map((r) => r.pct));
+  ccBars = rows;
+  const bars = rows.map((r, i) =>
+    `<div class="cc-bar ${r.src === "Codex" ? "cx" : "cl"}" data-i="${i}"` +
+    ` style="height:${(r.pct / max) * 100}%"></div>`).join("");
+  const span = [rows[0], rows[rows.length - 1]].map((r) =>
+    new Date(r.when).toLocaleDateString([], { month: "short", day: "numeric" }));
+  $("ccTop").innerHTML =
+    `<div class="cc-bars">${bars}</div><div id="ccTip" hidden></div>` +
+    `<div class="cc-axis muted"><span>${span[0]}</span>` +
+    `<span>peak ${max.toFixed(1)}% of one model's spend</span><span>${span[1]}</span></div>`;
+}
+
+let ccBars = [];
+function wireChatTip() {
+  const host = $("ccTop");
+  if (!host) return;
+  const esc = (t) => { const d = document.createElement("div"); d.textContent = t; return d.innerHTML; };
+  host.addEventListener("mousemove", (e) => {
+    const bar = e.target.closest(".cc-bar");
+    const tip = $("ccTip");
+    if (!tip) return;
+    if (!bar) { tip.hidden = true; return; }
+    const r = ccBars[+bar.dataset.i];
+    if (!r) { tip.hidden = true; return; }
+    // Claude Code titles newer sessions itself (ai-title); older ones and every
+    // Codex session have none, so fall back to the working directory.
+    const when = new Date(r.when);
+    const rows_ = [
+      [r.src + " · " + r.model, ""],
+      ["started", when.toLocaleString([], { month: "short", day: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false })],
+    ];
+    if (r.end) rows_.push(["ran for", fmtDur((new Date(r.end) - when) / 1000)]);
+    if (r.branch) rows_.push(["branch", r.branch]);
+    if (r.calls) rows_.push(["API calls", r.calls.toLocaleString()]);
+    rows_.push(["share of " + r.model, r.pct.toFixed(1) + "%"]);
+    rows_.push(["API-equivalent", fmtMoney(r.cost)]);
+    tip.innerHTML =
+      `<div class="tip-t">${esc(r.title || r.label)}</div>` +
+      (r.title ? `<div class="tip-sub">${esc(r.label)}</div>` : "") +
+      rows_.map(([k, v]) => `<div class="tip-r"><span>${esc(k)}</span>` +
+        (v ? `<b>${esc(v)}</b>` : "") + `</div>`).join("");
+    tip.hidden = false;
+    // Clamp so the box never hangs off either edge of the card.
+    const w = tip.offsetWidth, hostW = host.clientWidth;
+    const x = e.clientX - host.getBoundingClientRect().left;
+    tip.style.left = Math.max(0, Math.min(hostW - w, x - w / 2)) + "px";
+  });
+  host.addEventListener("mouseleave", () => { const t = $("ccTip"); if (t) t.hidden = true; });
 }
 
 // ---- self-update banner ----
@@ -974,7 +1037,7 @@ window.addEventListener("load", () => {
     [nowDivider()]);
   // Codex has no real 5-hour limit (its 5-hour "Spark" window is feature-specific
   // and usually 0), so hide that series.
-  X.chart = makeChart("cxChart", [{ label: "5h", color: "--cx1", show: false }, { label: "7d", color: "--sd" }],
+  X.chart = makeChart("cxChart", [{ label: "5h", color: "--cx1", show: false }, { label: "7d", color: "--cx2" }],
     [nowDivider()]);
   observeSize("chart", () => C.chart);
   observeSize("cxChart", () => X.chart);
@@ -982,6 +1045,7 @@ window.addEventListener("load", () => {
   wireRange();
   wireForecastModel();
   wireAccuracy();
+  wireChatTip();
   wireUpdate();
   wireCheckUpdate();
   claudeGauge = makeGauge("claudeGauge", [0.3, 0.6]);   // 0–100 %/h dial, red from 60

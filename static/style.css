@@ -4,16 +4,20 @@
   --muted: #8a9099;
   --line: #ecedf1;
   --card: #ffffff;
-  --fh: #6366f1;   /* Claude 5-hour  (indigo) */
-  --sd: #f59e0b;   /* 7-day (orange) — both Claude and Codex */
-  --cx1: #f59e0b;  /* Codex primary  (amber)  */
-  --cx2: #8b5cf6;  /* Codex secondary(violet) */
-  --fh-dim: rgba(99,102,241,.40);   /* forecast projection — lighter line colors */
-  --sd-dim: rgba(245,158,11,.40);
-  --cx1-dim: rgba(245,158,11,.40);
-  --fh-band: rgba(99,102,241,.13);  /* cone forecast — translucent p10-p90 fill */
-  --sd-band: rgba(245,158,11,.13);
-  --cx1-band: rgba(245,158,11,.13);
+  /* Claude is always orange, Codex is always blue. Shade separates the windows
+     within a provider; hue never crosses between them. */
+  --fh: #f59e0b;   /* Claude 5-hour  (orange) */
+  --sd: #c2410c;   /* Claude 7-day   (burnt orange — well clear of --fh) */
+  --cx1: #6366f1;  /* Codex 5-hour   (indigo) */
+  --cx2: #3b82f6;  /* Codex 7-day    (blue) */
+  --fh-dim: rgba(245,158,11,.40);   /* forecast projection — lighter line colors */
+  --sd-dim: rgba(194,65,12,.40);
+  --cx1-dim: rgba(99,102,241,.40);
+  --cx2-dim: rgba(59,130,246,.40);
+  --fh-band: rgba(245,158,11,.13);  /* cone forecast — translucent p10-p90 fill */
+  --sd-band: rgba(194,65,12,.13);
+  --cx1-band: rgba(99,102,241,.13);
+  --cx2-band: rgba(59,130,246,.13);
   --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
   --radius: 14px;
 }
@@ -69,6 +73,31 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
   color: var(--muted); background: var(--card);
   padding: 1px 5px; border-radius: 5px;
 }
+
+#ccTop { margin-top: 14px; position: relative; }
+#ccTip {
+  /* Inside the bar area, not above it — anchoring to the card's top edge would
+     push the box out of the card and get it clipped. */
+  position: absolute; top: 0;
+  pointer-events: none; z-index: 5; min-width: 190px;
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px;
+  box-shadow: 0 6px 20px -6px rgba(16,24,40,.28);
+}
+#ccTip { max-width: 320px; }
+#ccTip .tip-t { font-weight: 600; margin-bottom: 2px; }
+#ccTip .tip-sub { color: var(--muted); font-size: 11px; margin-bottom: 5px; word-break: break-all; }
+#ccTip .tip-r b { white-space: nowrap; }
+#ccTip .tip-r { display: flex; justify-content: space-between; gap: 14px; color: var(--muted); }
+#ccTip .tip-r b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.cc-bars { display: flex; align-items: flex-end; gap: 2px; height: 110px; }
+.cc-bar { flex: 1; min-width: 3px; border-radius: 2px 2px 0 0; transition: opacity .12s; }
+.cc-bar.cl { background: var(--fh); }
+.cc-bar.cx { background: var(--cx1); }
+.cc-bars:hover .cc-bar { opacity: .45; }
+.cc-bars .cc-bar:hover { opacity: 1; }
+.cc-axis { display: flex; justify-content: space-between; font-size: 11px; margin-top: 6px; }
 
 /* forecast-accuracy table */
 .acc-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }

@@ -64,11 +64,20 @@ def _add(dst: dict, lt: dict):
     dst["out"] = dst.get("out", 0) + (lt.get("output_tokens") or 0)
 
 
+CACHE_V = 3          # bump to force a full rescan when the shape changes
+
+
 def _load() -> dict:
     try:
-        return json.load(open(CACHE))
+        st = json.load(open(CACHE))
+        if st.get("v") == CACHE_V:
+            return st
     except Exception:
-        return {"files": {}, "models": {}, "alltime": {}, "buckets": {}}
+        pass
+    # Old cache: the per-file offsets would skip bytes we never aggregated
+    # per-session, so start clean rather than show half a history.
+    return {"v": CACHE_V, "files": {}, "models": {}, "alltime": {},
+            "buckets": {}, "sessions": {}}
 
 
 def _save(state: dict):
@@ -102,19 +111,28 @@ def refresh() -> dict:
                 files[f] = size                # truncation guard
             continue
         cur_model = models.get(f) or "default"
+        sess = st["sessions"].setdefault(f, {"t": None, "m": {}})
         try:
             with open(f, "r", errors="ignore") as fh:
                 fh.seek(off)
                 for line in fh:
                     is_tok = '"last_token_usage"' in line
                     is_ctx = '"turn_context"' in line and '"model"' in line
-                    if not (is_tok or is_ctx):
+                    # No generated title exists in these logs; cwd and branch are
+                    # the closest thing to a description of what the session was.
+                    is_meta = '"session_meta"' in line
+                    if not (is_tok or is_ctx or is_meta):
                         continue
                     try:
                         o = json.loads(line)
                     except ValueError:
                         continue
                     pl = o.get("payload") or {}
+                    if is_meta:
+                        sess["cwd"] = pl.get("cwd") or sess.get("cwd")
+                        sess["branch"] = (pl.get("git") or {}).get("branch") or sess.get("branch")
+                        sess["src"] = pl.get("source") or sess.get("src")
+                        continue
                     if is_ctx:                  # remember which model this turn used
                         m = pl.get("model")
                         if isinstance(m, str):
@@ -123,6 +141,11 @@ def refresh() -> dict:
                     lt = (pl.get("info") or {}).get("last_token_usage")
                     if isinstance(lt, dict):
                         _add(alltime.setdefault(cur_model, {}), lt)
+                        _add(sess["m"].setdefault(cur_model, {}), lt)
+                        if sess["t"] is None:
+                            sess["t"] = o.get("timestamp")
+                        sess["end"] = o.get("timestamp") or sess.get("end")
+                        sess["calls"] = sess.get("calls", 0) + 1
                         h = _hour(o.get("timestamp"))
                         if h is not None:
                             _add(buckets.setdefault(str(h), {}).setdefault(cur_model, {}), lt)
@@ -171,6 +194,27 @@ def _window(buckets: dict, since_hour: int) -> dict:
     return agg
 
 
+def top_sessions(st: dict, pricing: dict, by_model: dict, n: int = 40) -> list:
+    """Codex logs carry no project or title — the rollout filename's timestamp
+    is the only handle on a session."""
+    out = []
+    for f, sess in (st.get("sessions") or {}).items():
+        total, by_model_s, _ = _cost(sess.get("m") or {}, pricing)
+        if total <= 0:
+            continue
+        model = max(by_model_s, key=by_model_s.get)
+        # Share of that model's own all-time spend (see ccost.top_sessions).
+        pct = 100.0 * total / by_model[model] if by_model.get(model) else 0.0
+        cwd = sess.get("cwd") or ""
+        out.append({"label": os.path.basename(cwd) or os.path.basename(f)[8:24].replace("T", " "),
+                    "when": sess.get("t"), "cost": total, "model": model, "pct": pct,
+                    "title": None, "branch": sess.get("branch"),
+                    "calls": sess.get("calls", 0), "end": sess.get("end"),
+                    "src": sess.get("src")})
+    out.sort(key=lambda x: -x["cost"])
+    return out[:n]
+
+
 def snapshot(st: dict) -> dict:
     pricing = _pricing()
     now_h = int(time.time() // 3600)
@@ -182,6 +226,7 @@ def snapshot(st: dict) -> dict:
         "total": total, "d7": d7, "d1": d1,
         "by_model": [{"model": m, "cost": c} for m, c in top],
         "by_component": comp,
+        "top": top_sessions(st, pricing, by_model),
     }
 
 

@@ -37,9 +37,9 @@ ANIM_STEP = 0.03       # animation frame interval
 RISE_EPS = 0.03        # min needle increase (of full dial) to trigger a rev
 GAUGES = ("claude", "codex")
 
-# Brand-ish accents, matching the dashboard (Claude indigo, Codex amber).
-CLAUDE_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.388, 0.400, 0.945, 1.0)
-CODEX_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.961, 0.620, 0.043, 1.0)
+# Brand accents, matching the dashboard: Claude is always orange, Codex always blue.
+CLAUDE_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.961, 0.620, 0.043, 1.0)
+CODEX_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.388, 0.400, 0.945, 1.0)
 
 
 def _draw_gauge(cx, cy, box_r, frac, color):
