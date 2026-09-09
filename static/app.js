@@ -53,7 +53,7 @@ function makeChart(elId, series, plugins) {
     padding: [8, 8, 0, 0],
     cursor: { y: false },
     legend: { show: false },
-    plugins: plugins || [],
+    plugins: [cursorTime(), ...(plugins || [])],
     scales: { y: { range: [0, 100] } },
     axes: [
       { grid: { show: false }, ticks: { show: false }, size: 34, values: fmtAxis,
@@ -66,6 +66,27 @@ function makeChart(elId, series, plugins) {
   };
   const empty = [[], ...real.map(() => []), ...proj.map(() => []), ...lo.map(() => []), ...hi.map(() => [])];
   return new uPlot(opts, empty, el);
+}
+
+// Timestamp readout following the cursor. uPlot already tracks the hovered index;
+// this just labels it. Lives in the over-layer, so both charts get it for free.
+function cursorTime() {
+  let el;
+  return { hooks: {
+    init: (u) => {
+      el = document.createElement("div");
+      el.className = "cursor-time";
+      u.over.appendChild(el);
+    },
+    setCursor: (u) => {
+      const i = u.cursor.idx;
+      if (i == null) { el.style.display = "none"; return; }
+      el.style.display = "";
+      el.textContent = new Date(u.data[0][i] * 1000).toLocaleString([], {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+      el.style.left = Math.max(0, Math.min(u.over.clientWidth, u.cursor.left)) + "px";
+    },
+  } };
 }
 
 // Faint dashed vertical line marking "now" — the boundary between history and the
