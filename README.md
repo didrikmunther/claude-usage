@@ -1,6 +1,6 @@
 # claude-usage
 
-<img alt="claude-usage dashboard — live Claude and Codex usage, burn-rate gauges, forecasts" src="assets/dashboard.png" />
+<img alt="claude-usage dashboard — live Claude and Codex usage, burn-rate gauges, weekly history with forecast cones, and the Zen and Widget toggles" src="assets/dashboard.png" />
 
 ## 🤖 Give this to your agent
 
