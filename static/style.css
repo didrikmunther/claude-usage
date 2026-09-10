@@ -198,7 +198,7 @@ table.acc-tbl tr.active td:first-child::after { content: " · in use"; color: va
 #chart { width: 100%; }
 
 .prog-card { padding: 14px 16px; margin-bottom: 24px; }
-.prog-head { font-size: 12px; margin-bottom: 10px; }
+.prog-head { font-size: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
 /* One shared control bar for both charts: range and forecast are view settings
    for the whole page, not per-panel state, so there is one of each. */
 .viewbar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }

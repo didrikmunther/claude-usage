@@ -528,3 +528,20 @@ test("a residual replay does not recurse into building its own band", () => {
   assert.equal(r.lo, undefined, "bare must skip the band");
   assert.ok(r.points.length);
 });
+
+test("nothing in the live cycle sits below what is already spent", () => {
+  // Usage only climbs until the reset empties the window, so a line or a band
+  // edge below the current value depicts an outcome that cannot happen.
+  const now = bursty[bursty.length - 1].t;
+  const cur = bursty[bursty.length - 1].y;
+  const reset = { P: 24 * 3600, R: 0 };
+  const cyc = (t) => Math.floor((t - reset.R) / reset.P);
+  for (const name of ["adaptive", "linear", "cycle", "cycle+tod"]) {
+    const r = Predictors[name].predict(bursty, { now, horizon: 12 * 3600, step: 3600, reset });
+    r.points.forEach((p, i) => {
+      if (cyc(p.t) !== cyc(now)) return;              // a later cycle really did empty
+      assert.ok(p.y >= cur - 1e-9, `${name}: line below current at ${i}`);
+      assert.ok(r.lo[i].y >= cur - 1e-9, `${name}: band floor below current at ${i}`);
+    });
+  }
+});

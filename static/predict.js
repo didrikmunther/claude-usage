@@ -489,6 +489,7 @@ function withBand(pts, points, opts, method) {
   const cyc = (t) => (reset && reset.P > 0 ? Math.floor((t - reset.R) / reset.P) : 0);
   const here = cyc(now);
   const lo = [], hi = [];
+  const line = [];
   for (const p of points) {
     const sameCycle = cyc(p.t) === here;
     // Within this cycle the uncertainty has been accumulating since `now`;
@@ -497,6 +498,8 @@ function withBand(pts, points, opts, method) {
     const hours = Math.max(0, since) / 3600;
     const rs = spreadAt(resid, hours);      // this model's own error, around the line
     const ms = spreadAt(moved, hours);      // how far the series moves, around today
+    const floorY = sameCycle ? points[0].y : 0;
+    line.push({ t: p.t, y: Math.max(floorY, p.y) });
     if (!rs && !ms) { lo.push({ t: p.t, y: p.y }); hi.push({ t: p.t, y: p.y }); continue; }
     // The union of the two. Residuals alone are mis-CENTRED: pinning the cone to
     // a drifting line moved it away from where outcomes land, and coverage fell
@@ -507,11 +510,15 @@ function withBand(pts, points, opts, method) {
     const cands = [];
     if (rs) cands.push([p.y + rs.lo, p.y + rs.hi]);
     if (ms) cands.push([base + ms.lo, base + ms.hi]);
-    const clamp = (v) => Math.max(0, Math.min(100, v));
+    // Usage cannot fall inside a window — it only ever climbs until the reset
+    // empties it. So nothing in this cycle may sit below what is already spent:
+    // a band dipping under the current value depicts an impossible outcome.
+    // After a reset the floor is zero, because the window really did empty.
+    const clamp = (v) => Math.max(base, Math.min(100, v));
     lo.push({ t: p.t, y: clamp(Math.min(p.y, ...cands.map((c) => c[0]))) });
     hi.push({ t: p.t, y: clamp(Math.max(p.y, ...cands.map((c) => c[1]))) });
   }
-  return { points, lo, hi, method };
+  return { points: line, lo, hi, method };
 }
 
 const Predictors = {
