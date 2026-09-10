@@ -343,14 +343,19 @@ const ADAPT_HALFLIFE = 3600;      // seconds for the burst to fade halfway to th
 const ADAPT_FLOOR = 0.5;          // ...and it fades to this fraction of the cycle average
 const ADAPT_NEXT = 0.5;           // and the cycle after a reset accrues this much of that
 
-// ---- empirical uncertainty band ----------------------------------------
-// A single line is the wrong shape for this data: most hours have no usage at
-// all and the rest arrive in spikes, so any point estimate is confidently wrong
-// most of the time. The band answers the honest question instead — how far has
-// usage actually moved over this long, historically?
+// ---- predictive distribution --------------------------------------------
+// A predictor answers predict(t, history) -> {p10, p50, p90}: the line is the
+// median, the cone is p10..p90. Quantiles rather than (mean, variance), because
+// this distribution has no useful symmetric summary — most hours are exactly
+// zero and the rest are spikes. On real data at +3h the mean change is 4.9pp
+// while the median is 0.0, and a normal band's lower edge lands at -19pp, which
+// would mean usage falling mid-cycle. It cannot.
 //
-// Calibrated from the series' own past rather than assumed: no normal
-// distribution, no sqrt(t) random walk, both of which this process violates.
+// The cone is each model's OWN error, measured by replaying it over history:
+// how wrong has THIS predictor been, this far ahead? So it moves when you switch
+// models, an accurate model earns a tighter cone, and no model can assert
+// certainty it has not earned — which is exactly what the simulated cone this
+// replaced used to do (zero width for its first 30 hours).
 const BAND_ANCHORS = [1, 2, 4, 8, 16, 32, 64, 128];   // hours ahead
 const BAND_LO = 0.1, BAND_HI = 0.9;                   // p10-p90
 
@@ -360,8 +365,72 @@ function quantile(sorted, q) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
 }
 
-// How much this series moved over each anchor lookahead, as p10/p90 increments.
-// Reset drops are excluded: they are a known event, not uncertainty.
+// Replay `model` across history and collect its signed errors (actual minus
+// predicted) at each anchor lookahead. Memoised: this is a backtest, and the
+// dashboard asks for it on every redraw.
+const RESID_ORIGIN_STEP = 6 * 3600;   // one replay every 6h of history...
+const RESID_MAX_ORIGINS = 40;         // ...but never more replays than this
+const RESID_MIN = 8;                  // fewest errors worth a quantile
+const residCache = new Map();
+
+function residualSpread(pts, opts, model) {
+  if (!model || pts.length < 48) return null;
+  // Keyed by the HOUR, not the latest sample: a backtest over weeks of history
+  // does not move in 60 seconds, and keying it per sample meant re-running the
+  // whole replay on every poll — 450ms of main thread for cycle+tod, every time.
+  const hour = Math.floor(pts[pts.length - 1].t / 3600);
+  const key = `${model}|${hour}|${opts && opts.reset ? opts.reset.R : 0}`;
+  if (residCache.has(key)) return residCache.get(key);
+
+  const P = Predictors[model];
+  const maxH = BAND_ANCHORS[BAND_ANCHORS.length - 1] * 3600;
+  const buckets = BAND_ANCHORS.map(() => []);
+  const at = (t) => {                                  // nearest real sample, or null
+    let lo = 0, hi = pts.length - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (pts[m].t < t) lo = m + 1; else hi = m; }
+    let best = null, bd = Infinity;
+    for (let k = Math.max(0, lo - 1); k <= Math.min(pts.length - 1, lo + 1); k++) {
+      const d = Math.abs(pts[k].t - t);
+      if (d < bd) { bd = d; best = pts[k]; }
+    }
+    return bd <= 900 ? best.y : null;
+  };
+  const first = pts[24].t, last = pts[pts.length - 1].t;
+  const step = Math.max(RESID_ORIGIN_STEP, (last - first) / RESID_MAX_ORIGINS);
+  let ti = 0;
+  for (let now = first; now <= last; now += step) {
+    while (ti < pts.length && pts[ti].t <= now) ti++;
+    if (ti < 24) continue;
+    let r;
+    // NB: no band on this call — residualSpread is what produces the band, and
+    // asking for one here would recurse.
+    try { r = P.predict(pts.slice(0, ti), { ...opts, now, horizon: maxH, step: 3600, bare: true }); }
+    catch { continue; }
+    if (!r || !r.points || !r.points.length) continue;
+    BAND_ANCHORS.forEach((h, i) => {
+      const truth = at(now + h * 3600);
+      if (truth == null) return;
+      const pred = sampleAt(r.points, now + h * 3600);
+      if (pred == null || !isFinite(pred)) return;
+      buckets[i].push(truth - pred);
+    });
+  }
+  const out = [];
+  BAND_ANCHORS.forEach((h, i) => {
+    const d = buckets[i];
+    if (d.length < RESID_MIN) return;
+    d.sort((a, b) => a - b);
+    out.push({ h, lo: quantile(d, BAND_LO), hi: quantile(d, BAND_HI) });
+  });
+  const res = out.length ? out : null;
+  if (residCache.size > 24) residCache.clear();
+  residCache.set(key, res);
+  return res;
+}
+
+// Fallback when a model has too little history to have earned residuals: how
+// much the series itself moved. Wider than a model's own error, which is the
+// right way to be wrong when you do not know yet.
 function bandSpread(pts) {
   if (pts.length < 24) return null;
   const t0 = pts[0].t, tN = pts[pts.length - 1].t;
@@ -411,8 +480,10 @@ function spreadAt(spread, hours) {
 // cycle starts from, so it collapses at a reset and reopens afterwards rather
 // than carrying the old cycle's uncertainty across the boundary.
 function withBand(pts, points, opts, method) {
-  const spread = bandSpread(pts);
-  if (!spread || !points.length) return { points, method };
+  if (opts && opts.bare) return { points, method };     // inside a residual replay
+  const resid = residualSpread(pts, opts, method);
+  const moved = bandSpread(pts);
+  if ((!resid && !moved) || !points.length) return { points, method };
   const now = points[0].t;
   const reset = resolveReset(pts, opts);
   const cyc = (t) => (reset && reset.P > 0 ? Math.floor((t - reset.R) / reset.P) : 0);
@@ -423,11 +494,22 @@ function withBand(pts, points, opts, method) {
     // Within this cycle the uncertainty has been accumulating since `now`;
     // in a later cycle it has only been accumulating since that cycle began.
     const since = sameCycle ? (p.t - now) : (p.t - (reset.R + cyc(p.t) * reset.P));
-    const sp = spreadAt(spread, Math.max(0, since) / 3600);
-    if (!sp) { lo.push({ t: p.t, y: p.y }); hi.push({ t: p.t, y: p.y }); continue; }
+    const hours = Math.max(0, since) / 3600;
+    const rs = spreadAt(resid, hours);      // this model's own error, around the line
+    const ms = spreadAt(moved, hours);      // how far the series moves, around today
+    if (!rs && !ms) { lo.push({ t: p.t, y: p.y }); hi.push({ t: p.t, y: p.y }); continue; }
+    // The union of the two. Residuals alone are mis-CENTRED: pinning the cone to
+    // a drifting line moved it away from where outcomes land, and coverage fell
+    // to 56%. Series movement alone is well calibrated but identical for every
+    // model. Together the cone answers both "where can usage go" and "how wrong
+    // is this predictor", stays >= 80% covered, and still responds to the picker.
     const base = sameCycle ? points[0].y : 0;
-    lo.push({ t: p.t, y: Math.max(0, Math.min(100, Math.min(p.y, base + sp.lo))) });
-    hi.push({ t: p.t, y: Math.max(0, Math.min(100, Math.max(p.y, base + sp.hi))) });
+    const cands = [];
+    if (rs) cands.push([p.y + rs.lo, p.y + rs.hi]);
+    if (ms) cands.push([base + ms.lo, base + ms.hi]);
+    const clamp = (v) => Math.max(0, Math.min(100, v));
+    lo.push({ t: p.t, y: clamp(Math.min(p.y, ...cands.map((c) => c[0]))) });
+    hi.push({ t: p.t, y: clamp(Math.max(p.y, ...cands.map((c) => c[1]))) });
   }
   return { points, lo, hi, method };
 }
@@ -550,5 +632,5 @@ const Predictors = {
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, bandSpread, withBand, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset };
+  module.exports = { Predictors, bandSpread, residualSpread, withBand, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset };
 }

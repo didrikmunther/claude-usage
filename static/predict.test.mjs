@@ -507,3 +507,24 @@ test("every predictor returns a band that brackets its own line", () => {
     }
   }
 });
+
+test("the cone differs between predictors on the same data", () => {
+  // The point of measuring each model's own error: switching the picker must
+  // change the cone, not just the line inside it.
+  const now = bursty[bursty.length - 1].t;
+  const opts = { now, horizon: 24 * 3600, step: 3600, reset: { P: 24 * 3600, R: 0 } };
+  const width = (n) => {
+    const r = Predictors[n].predict(bursty, opts);
+    return r.hi.reduce((a, p, i) => a + (p.y - r.lo[i].y), 0) / r.hi.length;
+  };
+  const w = ["adaptive", "linear", "cycle"].map(width);
+  assert.ok(new Set(w.map((x) => x.toFixed(3))).size > 1,
+    `expected the cone width to vary by model, got ${w.map((x) => x.toFixed(2))}`);
+});
+
+test("a residual replay does not recurse into building its own band", () => {
+  const now = bursty[bursty.length - 1].t;
+  const r = Predictors.adaptive.predict(bursty, { now, horizon: 3600, step: 3600, bare: true });
+  assert.equal(r.lo, undefined, "bare must skip the band");
+  assert.ok(r.points.length);
+});

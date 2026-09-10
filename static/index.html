@@ -28,6 +28,22 @@
       <button id="updateBtn" class="upd-btn">Update now</button>
     </div>
 
+    <div class="viewbar">
+      <span class="muted vb-lbl">range</span>
+      <div id="range" class="seg seg-sm" data-sync="range">
+        <button data-r="24h">24h</button>
+        <button data-r="7d">Week</button>
+        <button data-r="full">Full</button>
+      </div>
+      <span class="muted vb-lbl">forecast</span>
+      <div class="seg seg-sm" data-sync="model">
+        <button data-m="adaptive">Adaptive</button>
+        <button data-m="linear">Linear</button>
+        <button data-m="cycle">Cycle</button>
+        <button data-m="cycle+tod">Cycle+day</button>
+      </div>
+    </div>
+
     <div class="cols">
       <!-- ===================== CLAUDE ===================== -->
       <section class="col" id="colClaude">
@@ -51,11 +67,6 @@
 
         <section class="card chart-card">
           <div class="chart-head">
-            <div id="range" class="seg" data-sync="range">
-              <button data-r="24h">24h</button>
-              <button data-r="7d">Week</button>
-              <button data-r="full">Full</button>
-            </div>
             <div class="legend-col">
               <span class="legend">
                 <span class="lg"><i class="swatch fh"></i>5-hour</span>
@@ -68,7 +79,9 @@
         </section>
 
         <section class="card prog-card">
-          <div class="prog-head"><span class="muted">forecast · at your pace since each reset</span></div>
+          <div class="prog-head">
+            <span class="muted">forecast · at your pace since each reset</span>
+          </div>
           <div id="prog" class="prog"><div class="prog-row muted"><span class="prog-msg">gathering data…</span></div></div>
         </section>
 
@@ -90,11 +103,6 @@
 
         <section class="card chart-card">
           <div class="chart-head">
-            <div id="cxRange" class="seg" data-sync="range">
-              <button data-r="24h">24h</button>
-              <button data-r="7d">Week</button>
-              <button data-r="full">Full</button>
-            </div>
             <div class="legend-col">
               <span id="cxLegend" class="legend"></span>
               <span id="cxConsumed" class="consumed"></span>
@@ -104,7 +112,9 @@
         </section>
 
         <section class="card prog-card">
-          <div class="prog-head"><span class="muted">forecast · at your pace since each reset</span></div>
+          <div class="prog-head">
+            <span class="muted">forecast · at your pace since each reset</span>
+          </div>
           <div id="cxProg" class="prog"><div class="prog-row muted"><span class="prog-msg">gathering data…</span></div></div>
         </section>
 
@@ -144,13 +154,6 @@
       <input id="ivalNum" type="number" min="10" max="3600" value="60" />
       <span class="muted">sec</span>
       <button id="pollNow" class="btn">Poll now</button>
-      <label for="forecastModel" class="ctl-lbl">Forecast</label>
-      <select id="forecastModel" class="sel">
-        <option value="adaptive">Adaptive</option>
-        <option value="linear">Linear</option>
-        <option value="cycle">Cycle</option>
-        <option value="cycle+tod">Cycle + time of day</option>
-      </select>
       <label class="ctl-chk" title="Backtest every model against your own history">
         <input id="accToggle" type="checkbox" />Accuracy
       </label>

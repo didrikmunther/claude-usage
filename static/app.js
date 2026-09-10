@@ -22,8 +22,7 @@ let forecastModel = "adaptive";
 function setForecastModel(m) {
   if (!FORECAST_MODELS.includes(m) || m === forecastModel) return;
   forecastModel = m;
-  const sel = $("forecastModel");
-  if (sel) sel.value = m;
+  paintForecastModel();
   projCache.clear();
   applyRangeAll();
   accLast = 0; scoreForecasts();
@@ -566,14 +565,20 @@ function wireRange() {
     })));
 }
 
+// One control per panel, kept in step the way the range buttons are.
 function wireForecastModel() {
-  const sel = $("forecastModel");
-  if (!sel) return;
-  sel.value = forecastModel;
-  sel.addEventListener("change", () => {
-    // Tell the server; the broadcast comes back and applies it everywhere.
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ set_forecast_model: sel.value }));
-  });
+  document.querySelectorAll('.seg[data-sync="model"] button').forEach((b) =>
+    b.addEventListener("click", () => {
+      // Tell the server; the broadcast comes back and applies it everywhere,
+      // including the floating pill.
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ set_forecast_model: b.dataset.m }));
+    }));
+  paintForecastModel();
+}
+
+function paintForecastModel() {
+  document.querySelectorAll('.seg[data-sync="model"] button').forEach((b) =>
+    b.classList.toggle("on", b.dataset.m === forecastModel));
 }
 
 function setIntervalUI(n) {
