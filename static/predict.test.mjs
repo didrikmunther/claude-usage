@@ -482,12 +482,19 @@ test("adaptive keeps climbing across a multi-day horizon", () => {
   assert.ok(early > 0, "and to rise in the first hours too");
 });
 
-test("adaptive drops to zero at a reset and does not carry the burst over", () => {
+test("adaptive restarts after a reset instead of carrying the burst over", () => {
   const now = burstRun[burstRun.length - 1].t;
   // Far enough ahead to cross at least one 5-hour boundary.
   const r = Predictors.adaptive.predict(burstRun, { now, horizon: 8 * 3600, step: 3600, reset: RESET });
-  const past = r.points.filter((p) =>
-    Math.floor((p.t - RESET.R) / RESET.P) > Math.floor((now - RESET.R) / RESET.P));
+  const cyc = (t) => Math.floor((t - RESET.R) / RESET.P);
+  const before = r.points.filter((p) => cyc(p.t) === cyc(now));
+  const past = r.points.filter((p) => cyc(p.t) > cyc(now));
   assert.ok(past.length, "test should span a reset");
-  assert.ok(past.every((p) => p.y === 0), "every point after the reset must be 0");
+  // The burst must not survive the boundary...
+  assert.ok(past[0].y < before[before.length - 1].y,
+    "the first point after the reset must drop below the pre-reset level");
+  // ...but the next cycle is not predicted to be empty either. A flat zero here
+  // claimed "no usage for days", which is false on a weekly window.
+  assert.ok(past.every((p, i) => i === 0 || p.y >= past[i - 1].y),
+    "usage after the reset must accrue, not sit at zero");
 });

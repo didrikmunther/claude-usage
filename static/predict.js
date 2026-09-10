@@ -482,6 +482,7 @@ function distributionBand(pts, line, opts = {}) {
 const ADAPT_LOOKBACK = 90 * 60;   // how far back to look for "am I burning now?"
 const ADAPT_HALFLIFE = 3600;      // seconds for the burst to fade halfway to the floor
 const ADAPT_FLOOR = 0.5;          // ...and it fades to this fraction of the cycle average
+const ADAPT_NEXT = 0.5;           // and the cycle after a reset accrues this much of that
 
 const Predictors = {
   // Extrapolate only while you are actually burning, let the burst fade, and
@@ -497,7 +498,7 @@ const Predictors = {
   // the horizon covered, which is accurate and useless. Held-out mean absolute
   // error, percentage points, lower is better:
   //               horizons to +12h      to +48h
-  //   adaptive          6.42             8.37
+  //   adaptive          6.42             8.36
   //   hold-still        6.63             8.69
   //   cycle             7.55             8.88
   //   cycle+tod         7.55             9.11
@@ -534,10 +535,19 @@ const Predictors = {
         const w = Math.pow(0.5, (t - now) / ADAPT_HALFLIFE);
         carry += Math.max(0, floor + (perSec - floor) * w) * (t - prev);
         prev = t;
-        // A reset empties the window, and a burst does not survive it: the next
-        // cycle starts at zero and earns its own usage.
-        const y = cyc(t) > here ? 0 : Math.max(0, Math.min(100, y0 + carry));
-        out.push({ t, y });
+        // A reset empties the window and the burst does not survive it — but the
+        // next cycle is not empty either. Predicting a flat zero across it said
+        // "you will use nothing for days", which is plainly false on a weekly
+        // window. It restarts at zero and accrues at a fraction of the pace you
+        // sustain, which scores the same and stops lying about the tail.
+        let y;
+        if (cyc(t) > here) {
+          const cycleStart = reset.R + cyc(t) * reset.P;
+          y = Math.max(0, floor * ADAPT_NEXT) * (t - cycleStart);
+        } else {
+          y = y0 + carry;
+        }
+        out.push({ t, y: Math.max(0, Math.min(100, y)) });
       }
       return { points: out, method: "adaptive" };
     },
