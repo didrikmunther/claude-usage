@@ -216,7 +216,7 @@ function projectFrom(pts, slope, opts, method) {
   for (let t = now; t <= now + horizon + 1e-6; t += step) {
     points.push({ t, y: Math.max(0, Math.min(cap, yLast + slope * (t - tLast))) });
   }
-  return { method, points };
+  return withBand(pts, points, opts, method);
 }
 
 // Reset-aware projection: climb at `rate`, dropping to 0 at each inferred reset
@@ -243,7 +243,7 @@ function projectWithResets(pts, rate, P, R, opts, method) {
   times.add(now + horizon);
   for (let r = csNow + P; r <= now + horizon + 1e-9; r += P) { times.add(r - eps); times.add(r); }
   const points = [...times].sort((a, b) => a - b).map((t) => ({ t, y: climbAt(t) }));
-  return { method, points };
+  return withBand(pts, points, opts, method);
 }
 
 const hourOfLocal = (tSec) => new Date(tSec * 1000).getHours();
@@ -484,6 +484,95 @@ const ADAPT_HALFLIFE = 3600;      // seconds for the burst to fade halfway to th
 const ADAPT_FLOOR = 0.5;          // ...and it fades to this fraction of the cycle average
 const ADAPT_NEXT = 0.5;           // and the cycle after a reset accrues this much of that
 
+// ---- empirical uncertainty band ----------------------------------------
+// A single line is the wrong shape for this data: most hours have no usage at
+// all and the rest arrive in spikes, so any point estimate is confidently wrong
+// most of the time. The band answers the honest question instead — how far has
+// usage actually moved over this long, historically?
+//
+// Calibrated from the series' own past rather than assumed: no normal
+// distribution, no sqrt(t) random walk, both of which this process violates.
+const BAND_ANCHORS = [1, 2, 4, 8, 16, 32, 64, 128];   // hours ahead
+const BAND_LO = 0.1, BAND_HI = 0.9;                   // p10-p90
+
+function quantile(sorted, q) {
+  if (!sorted.length) return 0;
+  const i = (sorted.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+
+// How much this series moved over each anchor lookahead, as p10/p90 increments.
+// Reset drops are excluded: they are a known event, not uncertainty.
+function bandSpread(pts) {
+  if (pts.length < 24) return null;
+  const t0 = pts[0].t, tN = pts[pts.length - 1].t;
+  if (tN - t0 < 6 * 3600) return null;
+  // hourly grid, nearest sample within 15 min or a gap
+  const grid = [];
+  let j = 0;
+  for (let t = t0; t <= tN; t += 3600) {
+    while (j + 1 < pts.length && pts[j + 1].t <= t) j++;
+    let best = null, bd = Infinity;
+    for (let k = Math.max(0, j - 1); k <= Math.min(pts.length - 1, j + 1); k++) {
+      const d = Math.abs(pts[k].t - t);
+      if (d < bd) { bd = d; best = pts[k]; }
+    }
+    grid.push(bd <= 900 ? best.y : null);
+  }
+  const out = [];
+  for (const k of BAND_ANCHORS) {
+    const d = [];
+    for (let i = 0; i + k < grid.length; i++) {
+      if (grid[i] == null || grid[i + k] == null) continue;
+      const x = grid[i + k] - grid[i];
+      if (x < -5) continue;                 // a reset, not a movement
+      d.push(x);
+    }
+    if (d.length < 8) continue;
+    d.sort((a, b) => a - b);
+    out.push({ h: k, lo: quantile(d, BAND_LO), hi: quantile(d, BAND_HI) });
+  }
+  return out.length ? out : null;
+}
+
+// Interpolate the spread between anchors, flat beyond the last one.
+function spreadAt(spread, hours) {
+  if (!spread || !spread.length) return null;
+  if (hours <= spread[0].h) return spread[0];
+  for (let i = 1; i < spread.length; i++) {
+    if (hours <= spread[i].h) {
+      const a = spread[i - 1], b = spread[i], f = (hours - a.h) / (b.h - a.h);
+      return { lo: a.lo + (b.lo - a.lo) * f, hi: a.hi + (b.hi - a.hi) * f };
+    }
+  }
+  return spread[spread.length - 1];
+}
+
+// Attach a band to a plain trajectory. The band is anchored on the value each
+// cycle starts from, so it collapses at a reset and reopens afterwards rather
+// than carrying the old cycle's uncertainty across the boundary.
+function withBand(pts, points, opts, method) {
+  const spread = bandSpread(pts);
+  if (!spread || !points.length) return { points, method };
+  const now = points[0].t;
+  const reset = resolveReset(pts, opts);
+  const cyc = (t) => (reset && reset.P > 0 ? Math.floor((t - reset.R) / reset.P) : 0);
+  const here = cyc(now);
+  const lo = [], hi = [];
+  for (const p of points) {
+    const sameCycle = cyc(p.t) === here;
+    // Within this cycle the uncertainty has been accumulating since `now`;
+    // in a later cycle it has only been accumulating since that cycle began.
+    const since = sameCycle ? (p.t - now) : (p.t - (reset.R + cyc(p.t) * reset.P));
+    const sp = spreadAt(spread, Math.max(0, since) / 3600);
+    if (!sp) { lo.push({ t: p.t, y: p.y }); hi.push({ t: p.t, y: p.y }); continue; }
+    const base = sameCycle ? points[0].y : 0;
+    lo.push({ t: p.t, y: Math.max(0, Math.min(100, Math.min(p.y, base + sp.lo))) });
+    hi.push({ t: p.t, y: Math.max(0, Math.min(100, Math.max(p.y, base + sp.hi))) });
+  }
+  return { points, lo, hi, method };
+}
+
 const Predictors = {
   // Extrapolate only while you are actually burning, let the burst fade, and
   // never carry it across a reset.
@@ -549,7 +638,7 @@ const Predictors = {
         }
         out.push({ t, y: Math.max(0, Math.min(100, y)) });
       }
-      return { points: out, method: "adaptive" };
+      return withBand(pts, out, opts, "adaptive");
     },
   },
 
@@ -591,8 +680,10 @@ const Predictors = {
       const now = opts.now ?? (pts.length ? pts[pts.length - 1].t : 0);
       const recentSlope = recentTrailingSlope(pts, now, opts.recentLookback);
       const r = projectTOD(pts, hourRate, reset, { ...opts, now, recentSlope }, "cycle+tod");
-      const band = distributionBand(pts, r.points, opts);
-      return { ...r, lo: band.lo, hi: band.hi };
+      // The same empirical band as every other model: one definition, calibrated
+      // from history. The simulated cone it replaced could collapse to the
+      // median line, reporting no uncertainty at all.
+      return withBand(pts, r.points, opts, r.method);
     },
   },
 };
@@ -600,5 +691,5 @@ const Predictors = {
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset, coneForecast, resampleHourly, cycleProfiles, distributionBand };
+  module.exports = { Predictors, bandSpread, withBand, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset, coneForecast, resampleHourly, cycleProfiles, distributionBand };
 }

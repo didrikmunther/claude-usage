@@ -182,9 +182,12 @@ const ramp = (cur, perH, hours) =>
   Array.from({ length: hours + 1 }, (_, i) => ({ t: now() + i * 3600, y: cur + perH * i }));
 
 test("forecastFromPoints reports where the trajectory lands", () => {
-  const p = forecastFromPoints(20, 5 * H, resetIn(4), ramp(20, 2, 6));
+  // The reset sits at 4.5h, deliberately between two hourly points: ramp() and
+  // resetIn() each read the clock, and a boundary exactly on a point made this
+  // flip between 28% and 30% on millisecond drift.
+  const p = forecastFromPoints(20, 5 * H, resetIn(4.5), ramp(20, 2, 6));
   assert.equal(p.cls, "ok");
-  assert.match(p.msg, /on track — ~28% by reset/);   // 20 + 2*4h
+  assert.match(p.msg, /on track — ~28% by reset/);   // last point at or before: 20 + 2*4h
 });
 
 test("forecastFromPoints warns when the trajectory crosses 100", () => {

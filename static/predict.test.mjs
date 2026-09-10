@@ -498,3 +498,41 @@ test("adaptive restarts after a reset instead of carrying the burst over", () =>
   assert.ok(past.every((p, i) => i === 0 || p.y >= past[i - 1].y),
     "usage after the reset must accrue, not sit at zero");
 });
+
+
+// ---- the empirical band ---------------------------------------------------
+// A single line is the wrong shape for bursty, mostly-zero data. Every model
+// now carries a p10-p90 band measured from the series' own history.
+const { bandSpread } = mod;
+
+// 5 days of hourly samples: quiet most hours, occasional jumps.
+const bursty = (() => {
+  const out = []; let y = 0;
+  for (let i = 0; i < 120; i++) { if (i % 7 === 0) y += 3; out.push({ t: i * 3600, y }); }
+  return out;
+})();
+
+test("bandSpread measures how far usage actually moved, and widens with time", () => {
+  const sp = bandSpread(bursty);
+  assert.ok(sp && sp.length, "expected a spread from 5 days of samples");
+  const one = sp.find((x) => x.h === 1), far = sp[sp.length - 1];
+  assert.ok(far.hi >= one.hi, "the p90 must not shrink as the horizon grows");
+  assert.ok(one.lo <= one.hi);
+});
+
+test("bandSpread declines when there is too little history to measure", () => {
+  assert.equal(bandSpread([{ t: 0, y: 1 }, { t: 60, y: 2 }]), null);
+});
+
+test("every predictor returns a band that brackets its own line", () => {
+  const now = bursty[bursty.length - 1].t;
+  const opts = { now, horizon: 24 * 3600, step: 3600, reset: { P: 24 * 3600, R: 0 } };
+  for (const name of ["adaptive", "linear", "cycle", "cycle+tod"]) {
+    const r = Predictors[name].predict(bursty, opts);
+    assert.ok(r.lo && r.hi, `${name} produced no band`);
+    for (let i = 0; i < r.points.length; i++) {
+      assert.ok(r.lo[i].y <= r.points[i].y + 1e-9, `${name}: lo above the line at ${i}`);
+      assert.ok(r.hi[i].y >= r.points[i].y - 1e-9, `${name}: hi below the line at ${i}`);
+    }
+  }
+});
