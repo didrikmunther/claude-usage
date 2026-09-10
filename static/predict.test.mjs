@@ -442,3 +442,36 @@ test("cycle+tod returns a distribution band around its line", () => {
   }
   assert.ok(r.hi.some((p, i) => p.y - r.lo[i].y > 1), "band has width");
 });
+
+
+// ---- adaptive: trend only while burning, fading, never across a reset -----
+const RESET = { P: 5 * 3600, R: 100000 };   // 5-hour window, known boundary
+const idleRun = Array.from({ length: 60 }, (_, i) => ({ t: 80000 + i * 60, y: 20 }));
+const burstRun = Array.from({ length: 60 }, (_, i) => ({ t: 80000 + i * 60, y: 20 + i * 0.2 }));
+
+test("adaptive holds still when usage is idle", () => {
+  const now = idleRun[idleRun.length - 1].t;
+  const r = Predictors.adaptive.predict(idleRun, { now, horizon: 3 * 3600, step: 3600, reset: RESET });
+  assert.ok(r.points.every((p) => Math.abs(p.y - 20) < 0.01),
+    "a flat series must not be extrapolated upward");
+});
+
+test("adaptive extrapolates a live burst, but damped below linear", () => {
+  const now = burstRun[burstRun.length - 1].t;
+  const opts = { now, horizon: 3 * 3600, step: 3600, reset: RESET };
+  const a = Predictors.adaptive.predict(burstRun, opts).points.at(-1).y;
+  const l = Predictors.linear.predict(burstRun, opts).points.at(-1).y;
+  const cur = burstRun[burstRun.length - 1].y;
+  assert.ok(a > cur, `expected growth from ${cur}, got ${a}`);
+  assert.ok(a < l, `adaptive (${a}) should stay under linear (${l})`);
+});
+
+test("adaptive drops to zero at a reset and does not carry the burst over", () => {
+  const now = burstRun[burstRun.length - 1].t;
+  // Far enough ahead to cross at least one 5-hour boundary.
+  const r = Predictors.adaptive.predict(burstRun, { now, horizon: 8 * 3600, step: 3600, reset: RESET });
+  const past = r.points.filter((p) =>
+    Math.floor((p.t - RESET.R) / RESET.P) > Math.floor((now - RESET.R) / RESET.P));
+  assert.ok(past.length, "test should span a reset");
+  assert.ok(past.every((p) => p.y === 0), "every point after the reset must be 0");
+});

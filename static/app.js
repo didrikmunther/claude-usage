@@ -13,11 +13,11 @@ const RANGES = { "24h": 24 * 3600, "7d": 7 * 24 * 3600, full: Infinity };
 let range = RANGES[localStorage.getItem("range")] !== undefined ? localStorage.getItem("range") : "24h";
 
 // Which forecast strategy drives the chart projection (see predict.js).
-const FORECAST_MODELS = ["linear", "cycle", "cycle+tod"];
+const FORECAST_MODELS = ["adaptive", "linear", "cycle", "cycle+tod"];
 // Server-owned, not localStorage: the floating pill runs in a web view with no
 // persistent storage, so this is the only place both surfaces can read one value.
 // Arrives on the WebSocket "init" and on every "forecast_model" broadcast.
-let forecastModel = "cycle+tod";
+let forecastModel = "adaptive";
 
 function setForecastModel(m) {
   if (!FORECAST_MODELS.includes(m) || m === forecastModel) return;

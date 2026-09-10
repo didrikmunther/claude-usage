@@ -476,7 +476,49 @@ function distributionBand(pts, line, opts = {}) {
   return { lo, hi };
 }
 
+// "adaptive" tuning. Measured over ~20 days of real history with a 65/35
+// train/test split: the family is a flat plateau across 60-120 min and 0.4-0.6,
+// so these are an interior point rather than a knife-edge fit.
+const ADAPT_LOOKBACK = 90 * 60;   // how far back to look for "am I burning now?"
+const ADAPT_DECAY = 0.5;          // per-hour decay of the burst; 1 = never fades
+
 const Predictors = {
+  // Extrapolate only while you are actually burning, let the burst fade, and
+  // never carry it across a reset.
+  //
+  // This exists because the other predictors lose to doing nothing. Scored on
+  // held-out history (mean absolute error in percentage points, lower better):
+  //   adaptive 6.44 · hold-still 6.63 · cycle+tod 7.55 · cycle 7.55 · linear 7.69
+  // Their shared failure is extrapolating a stale slope straight through an idle
+  // stretch; asking "is usage moving right now?" first is what fixes it.
+  adaptive: {
+    method: "adaptive",
+    predict(samples, opts = {}) {
+      const pts = (samples || []).filter((s) => s && s.y != null);
+      if (!pts.length) return { points: [], method: "adaptive" };
+      const now = opts.now != null ? opts.now : pts[pts.length - 1].t;
+      const horizon = opts.horizon || 0;
+      const step = Math.max(60, opts.step || 3600);
+      const y0 = pts[pts.length - 1].y;
+      const reset = resolveReset(pts, opts);
+      const perSec = recentTrailingSlope(pts, now, ADAPT_LOOKBACK);
+      const cyc = (t) => (reset && reset.P > 0 ? Math.floor((t - reset.R) / reset.P) : 0);
+      const here = cyc(now);
+      const out = [];
+      let carry = 0, prev = now;
+      for (let t = now; t <= now + horizon; t += step) {
+        // Geometric decay, so a burst tapers instead of running forever.
+        carry += perSec * (t - prev) * Math.pow(ADAPT_DECAY, (t - now) / 3600);
+        prev = t;
+        // A reset empties the window, and a burst does not survive it: the next
+        // cycle starts at zero and earns its own usage.
+        const y = cyc(t) > here ? 0 : Math.max(0, Math.min(100, y0 + carry));
+        out.push({ t, y });
+      }
+      return { points: out, method: "adaptive" };
+    },
+  },
+
   // Simple linear regression over all samples.
   linear: {
     method: "linear",

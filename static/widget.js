@@ -50,7 +50,7 @@ function outlook(cur, winMs, resetIso, samples, proj) {
 
 // Which predictor to use. The server owns it, so the pill and the dashboard
 // cannot disagree; this web view has no persistent storage of its own.
-let forecastModel = "cycle+tod";
+let forecastModel = "adaptive";
 
 // The pill re-renders every second and cycle+tod is a simulation, so the
 // trajectory is cached until the data, the model or the reset moves.

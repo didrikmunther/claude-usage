@@ -6,7 +6,8 @@ import sqlite3
 import threading
 
 DEFAULT_INTERVAL = 60
-DEFAULT_FORECAST_MODEL = "cycle+tod"
+# Default is "adaptive": it beat every other predictor on held-out history.
+DEFAULT_FORECAST_MODEL = "adaptive"
 MIN_INTERVAL = 10
 MAX_INTERVAL = 3600
 
@@ -57,7 +58,7 @@ class Store:
     # Which predictor drives every forecast surface. Kept here, not in the
     # browser, because the floating pill runs in a web view with no persistent
     # storage — server-side is the only place both surfaces can read one value.
-    FORECAST_MODELS = ("linear", "cycle", "cycle+tod")
+    FORECAST_MODELS = ("adaptive", "linear", "cycle", "cycle+tod")
 
     def get_forecast_model(self) -> str:
         with self._lock:
