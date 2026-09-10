@@ -14,7 +14,20 @@ let range = RANGES[localStorage.getItem("range")] !== undefined ? localStorage.g
 
 // Which forecast strategy drives the chart projection (see predict.js).
 const FORECAST_MODELS = ["linear", "cycle", "cycle+tod"];
-let forecastModel = FORECAST_MODELS.includes(localStorage.getItem("forecastModel")) ? localStorage.getItem("forecastModel") : "cycle+tod";
+// Server-owned, not localStorage: the floating pill runs in a web view with no
+// persistent storage, so this is the only place both surfaces can read one value.
+// Arrives on the WebSocket "init" and on every "forecast_model" broadcast.
+let forecastModel = "cycle+tod";
+
+function setForecastModel(m) {
+  if (!FORECAST_MODELS.includes(m) || m === forecastModel) return;
+  forecastModel = m;
+  const sel = $("forecastModel");
+  if (sel) sel.value = m;
+  projCache.clear();
+  applyRangeAll();
+  accLast = 0; scoreForecasts();
+}
 
 // Claude's four windows (fixed lengths); Codex windows come from the payload.
 // series = index into C.data for the recent-rate method (null → plain cycle
@@ -24,10 +37,10 @@ let forecastModel = FORECAST_MODELS.includes(localStorage.getItem("forecastModel
 // the per-model weekly windows. (The bars keep 5-hour on top — this is just the
 // forecast list.)
 const CLAUDE_WIN = [
-  { key: "sd", label: "7-day",  reset: "seven_day",        winMs: 7 * 24 * 3600e3, series: null },
-  { key: "fh", label: "5-hour", reset: "five_hour",        winMs: 5 * 3600e3,      series: 1 },
-  { key: "so", label: "Opus",   reset: "seven_day_opus",   winMs: 7 * 24 * 3600e3, series: null },
-  { key: "sn", label: "Sonnet", reset: "seven_day_sonnet", winMs: 7 * 24 * 3600e3, series: null },
+  { key: "sd", label: "7-day",  reset: "seven_day",        winMs: 7 * 24 * 3600e3, series: null, col: 2 },
+  { key: "fh", label: "5-hour", reset: "five_hour",        winMs: 5 * 3600e3,      series: 1,    col: 1 },
+  { key: "so", label: "Opus",   reset: "seven_day_opus",   winMs: 7 * 24 * 3600e3, series: null, col: null },
+  { key: "sn", label: "Sonnet", reset: "seven_day_sonnet", winMs: 7 * 24 * 3600e3, series: null, col: null },
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -374,6 +387,36 @@ function renderClaudeResets() {
   $("sdReset").textContent = countdown(C.resets.seven_day);
 }
 
+// The text rows read the SAME trajectory the chart draws, so a sentence and the
+// curve above it can never disagree. Memoised because tick() runs every second
+// while the trajectory only moves when the data, model or reset does — and
+// cycle+tod is a simulation, not a formula.
+const projCache = new Map();
+function windowProjection(st, col, resetIso, reset) {
+  const ts = st.data[0];
+  if (col == null || !resetIso || !ts.length) return null;
+  const now = ts[ts.length - 1];
+  const horizon = new Date(resetIso).getTime() / 1000 - now;
+  if (!(horizon > 0)) return null;
+  const key = `${st === C ? "c" : "x"}|${col}|${forecastModel}|${now}|${resetIso}`;
+  if (projCache.has(key)) return projCache.get(key);
+  const P = Predictors[forecastModel] || Predictors.linear;
+  let pts = null;
+  try {
+    pts = P.predict(toSamples(ts, st.data[col]), { now, horizon, step: 3600, reset }).points;
+  } catch { pts = null; }
+  if (projCache.size > 12) projCache.clear();      // keys rotate on every sample
+  projCache.set(key, pts);
+  return pts;
+}
+
+// The projection wants the same authoritative reset the chart uses: a = series 1,
+// b = series 2.
+function colReset(st, col) {
+  const r = panelResets(st);
+  return col === 1 ? r.a : col === 2 ? r.b : null;
+}
+
 function renderClaudeForecast() {
   if (!C.last) return;
   const rows = [];
@@ -383,7 +426,11 @@ function renderClaudeForecast() {
     const resetIso = C.resets[w.reset];
     const samples = (w.series && resetIso)
       ? cycleSamples(C.data, w.series, new Date(resetIso).getTime(), w.winMs) : null;
-    rows.push(progRow(w.label, forecast(cur, w.winMs, resetIso, samples)));
+    // Windows the chart doesn't plot (Opus, Sonnet) keep the straight-line pace.
+    const proj = windowProjection(C, w.col, resetIso, colReset(C, w.col));
+    const p = (proj && forecastFromPoints(cur, w.winMs, resetIso, proj))
+      || forecast(cur, w.winMs, resetIso, samples);
+    rows.push(progRow(w.label, p));
   }
   $("prog").innerHTML = rows.join("") || emptyRow();
 }
@@ -444,12 +491,17 @@ function renderCodexForecast() {
   if (!X.last) return;
   const wins = X.last.windows || [];
   const idxByLabel = { "5-hour": 1 };   // only the 5-hour uses recent-rate; 7-day averages
+  const colByLabel = { "5-hour": 1, "7-day": 2 };   // which charted series the window is
   const progFor = (w) => {
     const idx = idxByLabel[w.label] || null;
+    const col = colByLabel[w.label] || null;
     const winMs = (w.window_seconds || 0) * 1000;
     const samples = (idx && w.reset_at)
       ? cycleSamples(X.data, idx, new Date(w.reset_at).getTime(), winMs) : null;
-    return progRow(w.label, forecast(w.used_percent, winMs, w.reset_at, samples));
+    const proj = windowProjection(X, col, w.reset_at, colReset(X, col));
+    const p = (proj && forecastFromPoints(w.used_percent, winMs, w.reset_at, proj))
+      || forecast(w.used_percent, winMs, w.reset_at, samples);
+    return progRow(w.label, p);
   };
   // Only real windows here (no ghost padding) — Codex's 7-day sits at the top,
   // aligning with Claude's now-top 7-day forecast row.
@@ -519,10 +571,8 @@ function wireForecastModel() {
   if (!sel) return;
   sel.value = forecastModel;
   sel.addEventListener("change", () => {
-    forecastModel = sel.value;
-    localStorage.setItem("forecastModel", forecastModel);
-    applyRangeAll();                   // rebuild the projection with the chosen predictor
-    accLast = 0; scoreForecasts();     // re-mark which row is "in use"
+    // Tell the server; the broadcast comes back and applies it everywhere.
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ set_forecast_model: sel.value }));
   });
 }
 
@@ -763,6 +813,7 @@ function connect() {
       if (m.xcost) renderXcost(m.xcost);
       if (m.update) renderUpdate(m.update);
       setIntervalUI(m.interval);
+      if (m.forecast_model) setForecastModel(m.forecast_model);
       setStatus(m.status);
       updateGauges();                       // set targets from history before revving
       scoreForecasts();
@@ -779,8 +830,11 @@ function connect() {
       renderUpdate(m.update);
     } else if (m.type === "status") {
       setStatus(m.status);
+    } else if (m.type === "forecast_model") {
+      setForecastModel(m.forecast_model);
     } else if (m.type === "interval") {
       setIntervalUI(m.interval);
+      if (m.forecast_model) setForecastModel(m.forecast_model);
     }
   };
 }

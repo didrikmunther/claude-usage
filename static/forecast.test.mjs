@@ -172,3 +172,43 @@ test("the two readings agree about which side of the limit you are on", () => {
   assert.ok(windowMargin(85, 5 * H, resetIn(1), null) < 0);
   assert.equal(projectedAtReset(85, 5 * H, resetIn(1), null), 100);
 });
+
+
+// ---- forecastFromPoints: the text row read off the chart's trajectory ----
+const { forecastFromPoints } = mod;
+const now = () => Date.now() / 1000;
+// A trajectory climbing `perH` %/h from `cur`, hourly, for `hours`.
+const ramp = (cur, perH, hours) =>
+  Array.from({ length: hours + 1 }, (_, i) => ({ t: now() + i * 3600, y: cur + perH * i }));
+
+test("forecastFromPoints reports where the trajectory lands", () => {
+  const p = forecastFromPoints(20, 5 * H, resetIn(4), ramp(20, 2, 6));
+  assert.equal(p.cls, "ok");
+  assert.match(p.msg, /on track — ~28% by reset/);   // 20 + 2*4h
+});
+
+test("forecastFromPoints warns when the trajectory crosses 100", () => {
+  const p = forecastFromPoints(80, 5 * H, resetIn(4), ramp(80, 10, 6));
+  assert.equal(p.cls, "warn");
+  assert.match(p.msg, /hits 100% in 2h/);            // 20 points to go at 10/h
+  assert.match(p.msg, /before reset/);
+});
+
+test("forecastFromPoints stops at the modelled reset, not past it", () => {
+  // Climbs to 96 then the model draws the reset drop to 0. Reading past the drop
+  // would report the next cycle's opening value and call a 96% week "idle".
+  const pts = ramp(34, 10, 6).concat([{ t: now() + 7 * 3600, y: 0 }]);
+  // 24h window with the reset 8h out, so 16h has elapsed — a 5h window could not
+  // have a reset 8h away, and the MIN_ELAPSED guard would fire instead.
+  const p = forecastFromPoints(34, 24 * H, resetIn(8), pts);
+  assert.match(p.msg, /~94% by reset/);
+  assert.doesNotMatch(p.msg, /idle/);
+});
+
+test("forecastFromPoints keeps the guards forecast() has", () => {
+  assert.equal(forecastFromPoints(null, 5 * H, resetIn(1), ramp(1, 1, 3)), null);
+  assert.equal(forecastFromPoints(10, 5 * H, null, ramp(10, 1, 3)).msg, "no reset info");
+  assert.equal(forecastFromPoints(99.6, 5 * H, resetIn(1), ramp(99.6, 1, 3)).msg, "at the limit");
+  // Unusable points → null, so the caller falls back to forecast().
+  assert.equal(forecastFromPoints(20, 5 * H, resetIn(4), []), null);
+});

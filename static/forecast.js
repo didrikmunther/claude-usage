@@ -122,6 +122,61 @@ function projectedAtReset(cur, winMs, resetIso, samples) {
   return Math.max(0, Math.min(100, proj));
 }
 
+// The same verdicts forecast() produces, but read off a predictor's trajectory
+// instead of a single straight-line pace — so the sentence in the text row and
+// the dashed curve on the chart cannot disagree. Returns null when the points
+// are unusable, so the caller can fall back to forecast().
+function forecastFromPoints(cur, winMs, resetIso, points) {
+  if (cur == null) return null;
+  const resetMs = resetIso ? new Date(resetIso).getTime() : null;
+  if (resetMs == null) return { cls: "muted", msg: "no reset info" };
+  if (cur >= 99.5) return { cls: "warn", msg: "at the limit" };
+  const now = Date.now();
+  const elapsed = now - (resetMs - winMs);
+  const resetIn = fmtDur((resetMs - now) / 1000);
+  if (elapsed < MIN_ELAPSED_MS) return { cls: "muted", msg: `just reset — gathering data… · resets in ${resetIn}` };
+  if (!points || points.length < 2) return null;
+
+  const resetT = resetMs / 1000;
+  let hit = null, atReset = cur, prev = points[0];
+  for (const p of points) {
+    if (p.t > resetT) break;
+    // The cycle models draw the reset itself — a drop back to zero. That drop is
+    // the boundary we are forecasting TO, so stop at it; reading past it reports
+    // the next cycle's opening value and turns a 96% week into "idle at 34%".
+    if (p.y < prev.y - 5) break;
+    atReset = p.y;
+    if (hit == null && p.y >= 100 && p.t > now / 1000) {
+      // Interpolate the crossing rather than snapping to the hourly step.
+      const span = p.t - prev.t, rise = p.y - prev.y;
+      hit = rise > 0 ? prev.t + ((100 - prev.y) / rise) * span : p.t;
+    }
+    prev = p;
+  }
+  // The rate quoted is the trajectory's own average to the reset, not a
+  // separately-computed slope — same reason as above.
+  const hours = Math.max(1e-9, (resetT - now / 1000) / 3600);
+  const perH = (atReset - cur) / hours;
+  const rate = (perH >= 0 ? "+" : "") + perH.toFixed(Math.abs(perH) < 10 ? 1 : 0) + "%/h";
+
+  // atReset / hitMs are the same verdict as numbers, for callers that draw
+  // rather than write — the pill needs them to stay in step with the text row.
+  const nums = { atReset, hitMs: hit == null ? null : hit * 1000 };
+  if (hit != null) {
+    const exhaustMs = hit * 1000;
+    return {
+      cls: "warn",
+      msg: `hits 100% in ${fmtDur(hit - now / 1000)} (${fmtClock(exhaustMs)}) · ` +
+           `${fmtDur((resetMs - exhaustMs) / 1000)} before reset`,
+      rate, ...nums,
+    };
+  }
+  if (atReset - cur < 0.5 && perH <= 0) {
+    return { cls: "ok", msg: `idle — steady at ~${Math.round(cur)}% · resets in ${resetIn}`, rate, ...nums };
+  }
+  return { cls: "ok", msg: `on track — ~${Math.round(atReset)}% by reset (${resetIn})`, rate, ...nums };
+}
+
 // Forecast for one window. "already used" (cur%) stays anchored to the reset; the
 // FORWARD pace uses the recent weighted rate when history is available, else the
 // cycle average. Returns {cls, msg, rate} or null.
@@ -162,5 +217,6 @@ function forecast(cur, winMs, resetIso, samples) {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { MIN_ELAPSED_MS, fmtDur, fmtClock, recentSlope, cycleSamples,
-                     pace, windowMargin, fmtMargin, projectedAtReset, forecast };
+                     pace, windowMargin, fmtMargin, projectedAtReset, forecast,
+                     forecastFromPoints };
 }

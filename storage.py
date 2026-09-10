@@ -6,6 +6,7 @@ import sqlite3
 import threading
 
 DEFAULT_INTERVAL = 60
+DEFAULT_FORECAST_MODEL = "cycle+tod"
 MIN_INTERVAL = 10
 MAX_INTERVAL = 3600
 
@@ -52,6 +53,27 @@ class Store:
             rows = [dict(zip(self.COLS, r)) for r in cur.fetchall()]
         rows.sort(key=lambda r: r["ts"])
         return rows
+
+    # Which predictor drives every forecast surface. Kept here, not in the
+    # browser, because the floating pill runs in a web view with no persistent
+    # storage — server-side is the only place both surfaces can read one value.
+    FORECAST_MODELS = ("linear", "cycle", "cycle+tod")
+
+    def get_forecast_model(self) -> str:
+        with self._lock:
+            cur = self._db.execute("SELECT value FROM config WHERE key='forecast_model'")
+            r = cur.fetchone()
+        return r[0] if r and r[0] in self.FORECAST_MODELS else DEFAULT_FORECAST_MODEL
+
+    def set_forecast_model(self, model: str) -> str:
+        if model not in self.FORECAST_MODELS:
+            return self.get_forecast_model()
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO config (key, value) VALUES ('forecast_model', ?)",
+                (model,))
+            self._db.commit()
+        return model
 
     def get_interval(self) -> int:
         with self._lock:
