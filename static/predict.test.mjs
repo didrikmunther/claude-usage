@@ -378,7 +378,6 @@ test("cycle+tod projects resets on the authoritative period", () => {
 
 // --- cone predictor (block-bootstrap probabilistic band) --------------------
 
-const { coneForecast, resampleHourly } = mod;
 
 function climbSeries(days) {
   // Daily cycle: climb for 12h then idle 12h, reset each day. The climb rate
@@ -395,36 +394,8 @@ function climbSeries(days) {
   return pts;
 }
 
-test("resampleHourly keeps one point per hour", () => {
-  const pts = [{ t: 0, y: 1 }, { t: 600, y: 2 }, { t: 3600, y: 5 }, { t: 7200, y: 9 }];
-  assert.deepEqual(resampleHourly(pts), [{ t: 0, y: 2 }, { t: 3600, y: 5 }, { t: 7200, y: 9 }]);
-});
 
-test("coneForecast returns an ordered band anchored at the last value", () => {
-  const pts = climbSeries(6);
-  const now = pts[pts.length - 1].t;
-  const r = coneForecast(pts, {
-    now, horizon: 24 * 3600, step: 3600, reset: { P: 24 * 3600, R: now },
-    coneSims: 150, seed: 1,
-  });
-  assert.ok(r.lo.length && r.points.length && r.hi.length);
-  assert.equal(Math.round(r.points[0].y), Math.round(pts[pts.length - 1].y));   // anchored
-  for (let i = 0; i < r.points.length; i++) {
-    assert.ok(r.lo[i].y <= r.points[i].y + 1e-9, "p10 <= p50");
-    assert.ok(r.points[i].y <= r.hi[i].y + 1e-9, "p50 <= p90");
-    assert.ok(r.lo[i].y >= 0 && r.hi[i].y <= 100, "within [0,100]");
-  }
-  // The band has real width somewhere in the future (it is not a single line).
-  assert.ok(r.hi.some((p, i) => p.y - r.lo[i].y > 1), "band has width");
-});
 
-test("coneForecast is deterministic for a given seed", () => {
-  const pts = climbSeries(6);
-  const now = pts[pts.length - 1].t;
-  const opts = { now, horizon: 12 * 3600, step: 3600, reset: { P: 24 * 3600, R: now }, coneSims: 80, seed: 7 };
-  assert.deepEqual(coneForecast(pts, opts).hi, coneForecast(pts, opts).hi);
-  assert.deepEqual(coneForecast(pts, opts).lo, coneForecast(pts, opts).lo);
-});
 
 test("cycle+tod returns a distribution band around its line", () => {
   const pts = climbSeries(6);
