@@ -307,7 +307,10 @@ function loadHistory(rows) {
     C.data[0].push(r.ts / 1000); C.data[1].push(r.fh); C.data[2].push(r.sd);
     X.data[0].push(r.ts / 1000); X.data[1].push(r.cp); X.data[2].push(r.cs);
   }
-  applyRangeAll();
+  // Deliberately does NOT draw. The caller renders the live payloads first,
+  // because those carry the authoritative reset instants — drawing before them
+  // makes the predictor infer a reset period from noisy data, and the forecast
+  // comes out as a sawtooth that silently corrects on the next redraw.
 }
 
 // ---- formatting helpers ----
@@ -755,6 +758,7 @@ function connect() {
       loadHistory(m.history || []);
       if (m.claude) renderClaude(m.claude);
       if (m.codex) renderCodex(m.codex);
+      applyRangeAll();                      // now that resets are known
       if (m.cc) renderCC(m.cc);
       if (m.xcost) renderXcost(m.xcost);
       if (m.update) renderUpdate(m.update);
