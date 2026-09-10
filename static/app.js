@@ -623,9 +623,11 @@ function wireChatTip() {
     const bar = e.target.closest(".cc-bar");
     const tip = $("ccTip");
     if (!tip) return;
-    if (!bar) { tip.hidden = true; return; }
+    // Bars have gaps between them. Hiding whenever the cursor lands in a gap made
+    // the box strobe on the way across, so it only clears on mouseleave.
+    if (!bar) return;
     const r = ccBars[+bar.dataset.i];
-    if (!r) { tip.hidden = true; return; }
+    if (!r) return;
     // Claude Code titles newer sessions itself (ai-title); older ones and every
     // Codex session have none, so fall back to the working directory.
     const when = new Date(r.when);
@@ -645,10 +647,13 @@ function wireChatTip() {
       rows_.map(([k, v]) => `<div class="tip-r"><span>${esc(k)}</span>` +
         (v ? `<b>${esc(v)}</b>` : "") + `</div>`).join("");
     tip.hidden = false;
-    // Clamp so the box never hangs off either edge of the card.
-    const w = tip.offsetWidth, hostW = host.clientWidth;
+    // Parked on whichever side the cursor is not, rather than following it. A box
+    // that tracks the mouse jitters on every pixel of movement and sits under the
+    // pointer where it hides the very bar you are reading.
     const x = e.clientX - host.getBoundingClientRect().left;
-    tip.style.left = Math.max(0, Math.min(hostW - w, x - w / 2)) + "px";
+    const left = x > host.clientWidth / 2;
+    tip.style.left = left ? "0px" : "auto";
+    tip.style.right = left ? "auto" : "0px";
   });
   host.addEventListener("mouseleave", () => { const t = $("ccTip"); if (t) t.hidden = true; });
 }
