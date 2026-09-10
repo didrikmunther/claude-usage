@@ -480,17 +480,28 @@ function distributionBand(pts, line, opts = {}) {
 // train/test split: the family is a flat plateau across 60-120 min and 0.4-0.6,
 // so these are an interior point rather than a knife-edge fit.
 const ADAPT_LOOKBACK = 90 * 60;   // how far back to look for "am I burning now?"
-const ADAPT_DECAY = 0.5;          // per-hour decay of the burst; 1 = never fades
+const ADAPT_HALFLIFE = 3600;      // seconds for the burst to fade halfway to the floor
+const ADAPT_FLOOR = 0.5;          // ...and it fades to this fraction of the cycle average
 
 const Predictors = {
   // Extrapolate only while you are actually burning, let the burst fade, and
   // never carry it across a reset.
   //
-  // This exists because the other predictors lose to doing nothing. Scored on
-  // held-out history (mean absolute error in percentage points, lower better):
-  //   adaptive 6.44 · hold-still 6.63 · cycle+tod 7.55 · cycle 7.55 · linear 7.69
-  // Their shared failure is extrapolating a stale slope straight through an idle
-  // stretch; asking "is usage moving right now?" first is what fixes it.
+  // This exists because the other predictors lose to doing nothing. Their shared
+  // failure is extrapolating a stale slope straight through an idle stretch;
+  // asking "is usage moving right now?" first is what fixes it.
+  //
+  // The burst decays toward a FRACTION OF THE CYCLE AVERAGE, not toward zero.
+  // Decaying to zero instead produced a flat line on the weekly windows — the
+  // whole future contribution was capped at ~1.4 hours of burn however many days
+  // the horizon covered, which is accurate and useless. Held-out mean absolute
+  // error, percentage points, lower is better:
+  //               horizons to +12h      to +48h
+  //   adaptive          6.42             8.37
+  //   hold-still        6.63             8.69
+  //   cycle             7.55             8.88
+  //   cycle+tod         7.55             9.11
+  //   linear            7.69            10.62
   adaptive: {
     method: "adaptive",
     predict(samples, opts = {}) {
@@ -504,11 +515,24 @@ const Predictors = {
       const perSec = recentTrailingSlope(pts, now, ADAPT_LOOKBACK);
       const cyc = (t) => (reset && reset.P > 0 ? Math.floor((t - reset.R) / reset.P) : 0);
       const here = cyc(now);
+      // The pace this cycle has actually sustained so far — where the burst
+      // decays to, so a long horizon keeps rising at a rate you have really held.
+      let avgPerSec = 0;
+      if (reset && reset.P > 0) {
+        const start = reset.R + Math.floor((now - reset.R) / reset.P) * reset.P;
+        avgPerSec = Math.max(0, y0 / Math.max(60, now - start));
+      }
+      // Never above the rate you are burning right now: the burst decays DOWN to
+      // the sustained pace, never up to it. Early in a cycle y0/elapsed explodes
+      // (20% reached in 25 minutes reads as 47 %/h), and without this clamp an
+      // idle window would project a steep climb off a stale average.
+      const floor = Math.min(avgPerSec * ADAPT_FLOOR, perSec);
       const out = [];
       let carry = 0, prev = now;
       for (let t = now; t <= now + horizon; t += step) {
-        // Geometric decay, so a burst tapers instead of running forever.
-        carry += perSec * (t - prev) * Math.pow(ADAPT_DECAY, (t - now) / 3600);
+        // Burst now, sustained pace later.
+        const w = Math.pow(0.5, (t - now) / ADAPT_HALFLIFE);
+        carry += Math.max(0, floor + (perSec - floor) * w) * (t - prev);
         prev = t;
         // A reset empties the window, and a burst does not survive it: the next
         // cycle starts at zero and earns its own usage.

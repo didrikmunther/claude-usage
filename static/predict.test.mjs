@@ -456,14 +456,30 @@ test("adaptive holds still when usage is idle", () => {
     "a flat series must not be extrapolated upward");
 });
 
-test("adaptive extrapolates a live burst, but damped below linear", () => {
+test("adaptive extrapolates a live burst, never above the current rate", () => {
   const now = burstRun[burstRun.length - 1].t;
   const opts = { now, horizon: 3 * 3600, step: 3600, reset: RESET };
   const a = Predictors.adaptive.predict(burstRun, opts).points.at(-1).y;
   const l = Predictors.linear.predict(burstRun, opts).points.at(-1).y;
   const cur = burstRun[burstRun.length - 1].y;
   assert.ok(a > cur, `expected growth from ${cur}, got ${a}`);
-  assert.ok(a < l, `adaptive (${a}) should stay under linear (${l})`);
+  // The burst decays DOWN toward the sustained pace, so it can never outrun a
+  // straight extrapolation of the rate it is decaying from.
+  assert.ok(a <= l + 1e-9, `adaptive (${a}) must not exceed linear (${l})`);
+});
+
+test("adaptive keeps climbing across a multi-day horizon", () => {
+  // The reason the burst decays to a fraction of the sustained pace rather than
+  // to zero: a weekly window must not flatten out after the first few hours.
+  const week = { P: 7 * 86400, R: 0 };
+  const start = 3 * 86400;              // mid-cycle, so an average exists
+  const pts = Array.from({ length: 400 }, (_, i) => ({ t: start + i * 60, y: 20 + i * 0.02 }));
+  const now = pts[pts.length - 1].t;
+  const ys = Predictors.adaptive
+    .predict(pts, { now, horizon: 72 * 3600, step: 3600, reset: week }).points.map((p) => p.y);
+  const early = ys[6] - ys[0], late = ys[72] - ys[24];
+  assert.ok(late > 0.5, `expected the tail to keep rising, gained ${late.toFixed(2)}pp`);
+  assert.ok(early > 0, "and to rise in the first hours too");
 });
 
 test("adaptive drops to zero at a reset and does not carry the burst over", () => {
