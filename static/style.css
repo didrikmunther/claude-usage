@@ -199,11 +199,6 @@ table.acc-tbl tr.active td:first-child::after { content: " · in use"; color: va
 
 .prog-card { padding: 14px 16px; margin-bottom: 24px; }
 .prog-head { font-size: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
-/* One shared control bar for both charts: range and forecast are view settings
-   for the whole page, not per-panel state, so there is one of each. */
-.viewbar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-.viewbar .vb-lbl { font-size: 12px; }
-.viewbar .vb-lbl + .seg { margin-right: 10px; }
 /* Compact segmented control for the forecast picker, sitting inline in a card
    header rather than dominating it. */
 .seg-sm { padding: 2px; border-radius: 8px; }

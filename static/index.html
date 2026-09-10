@@ -28,15 +28,6 @@
       <button id="updateBtn" class="upd-btn">Update now</button>
     </div>
 
-    <div class="viewbar">
-      <span class="muted vb-lbl">range</span>
-      <div id="range" class="seg seg-sm" data-sync="range">
-        <button data-r="24h">24h</button>
-        <button data-r="7d">Week</button>
-        <button data-r="full">Full</button>
-      </div>
-    </div>
-
     <div class="cols">
       <!-- ===================== CLAUDE ===================== -->
       <section class="col" id="colClaude">
@@ -60,6 +51,11 @@
 
         <section class="card chart-card">
           <div class="chart-head">
+            <div class="seg" data-sync="range">
+              <button data-r="24h">24h</button>
+              <button data-r="7d">Week</button>
+              <button data-r="full">Full</button>
+            </div>
             <div class="legend-col">
               <span class="legend">
                 <span class="lg"><i class="swatch fh"></i>5-hour</span>
@@ -102,6 +98,11 @@
 
         <section class="card chart-card">
           <div class="chart-head">
+            <div class="seg" data-sync="range">
+              <button data-r="24h">24h</button>
+              <button data-r="7d">Week</button>
+              <button data-r="full">Full</button>
+            </div>
             <div class="legend-col">
               <span id="cxLegend" class="legend"></span>
               <span id="cxConsumed" class="consumed"></span>
