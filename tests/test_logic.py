@@ -281,30 +281,19 @@ def test_changelog_pending_is_after_seen_up_to_current():
     assert versions(cl_pending(e, None, "0.14.1")) == ["0.14.1", "0.14.0", "0.13.2"]
 
 
-def test_add_release_promotes_unreleased_notes_over_commits():
-    e = cl_parse(add_release(CL, "0.15.0", ["commit subject"], "2026-09-12"))
+def test_add_release_promotes_unreleased_notes():
+    e = cl_parse(add_release(CL, "0.15.0", "2026-09-12"))
     assert e[0] == {"version": "0.15.0", "date": "2026-09-12", "items": ["a hand-written note"]}
     assert all(x["version"] != "Unreleased" for x in e)      # the block is consumed
     assert [x["version"] for x in e[1:]] == ["0.14.1", "0.14.0", "0.13.2"]
 
 
-def test_add_release_falls_back_to_commit_subjects():
-    e = cl_parse(add_release(NO_NOTES, "0.15.0", ["one", "two"], "2026-09-12"))
-    assert e[0] == {"version": "0.15.0", "date": "2026-09-12", "items": ["one", "two"]}
-
-
-def test_add_release_refuses_duplicates_and_empty_releases():
+def test_add_release_requires_notes_and_a_new_version():
     import pytest
     with pytest.raises(ValueError):
-        add_release(CL, "0.14.1", ["x"], "2026-09-12")       # already released
+        add_release(NO_NOTES, "0.15.0", "2026-09-12")        # users see these: never skip
     with pytest.raises(ValueError):
-        add_release(NO_NOTES, "0.15.0", [], "2026-09-12")    # nothing to say
-
-
-def test_add_release_to_a_missing_file_writes_the_header():
-    out = add_release("", "0.1.0", ["first"], "2026-09-12")
-    assert out.startswith("# Changelog")
-    assert cl_parse(out)[0]["items"] == ["first"]
+        add_release(CL, "0.14.1", "2026-09-12")              # already released
 
 
 def test_previous_version_reads_where_the_updater_moved_from():

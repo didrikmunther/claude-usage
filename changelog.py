@@ -4,12 +4,12 @@ section each release adds.
 CHANGELOG.md is newest first, one section per release:
 
     ## [0.14.1] - 2026-09-11
-    - dashboard: place the chat bars by last use, not creation
+    - The chat spending chart now puts each chat on the day you last used it.
 
-An optional `## [Unreleased]` block at the top holds hand-written notes; the next
-`python3 changelog.py release X.Y.Z` (run by release.sh) promotes it into that
-release's section. Without one, the section is built from the commit subjects
-since the previous tag, so a release can never ship without an entry.
+Notes are written for the people using the app, not for developers: what they
+will notice, in plain language, no internals. They go under an `## [Unreleased]`
+block at the top; `python3 changelog.py release X.Y.Z` (run by release.sh)
+promotes it into that release's section, and refuses to release without one.
 
 Stdlib only: release.sh runs this with the system python3.
 """
@@ -25,7 +25,6 @@ from updater import parse_version
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PATH = os.path.join(HERE, "CHANGELOG.md")
-HEADER = "# Changelog\n\nWhat changed in each release, newest first.\n\n"
 
 _HEAD = re.compile(r"^## \[(?P<v>[^\]]+)\](?:\s*-\s*(?P<d>\S+))?\s*$")
 _MOVED = re.compile(r"checkout: moving from (\S+) to tags/(v\S+)")
@@ -60,16 +59,13 @@ def format_section(version: str, date: str, items: list[str]) -> str:
     return f"## [{version}] - {date}\n" + "".join(f"- {i}\n" for i in items) + "\n"
 
 
-def add_release(text: str, version: str, subjects: list[str], today: str) -> str:
-    """`text` with a section for `version` added at the top. Hand-written notes in
-    `## [Unreleased]` win; otherwise `subjects` (the commits since the last tag)
-    become the entries. Pure, so it is testable without git."""
+def add_release(text: str, version: str, today: str) -> str:
+    """`text` with its `## [Unreleased]` notes promoted to a section for
+    `version`. Pure, so it is testable without git or files."""
     if parse_version(version) is None:
         raise ValueError(f"not a semver version: {version!r}")
     if any(e["version"] == version for e in parse(text)):
         raise ValueError(f"CHANGELOG.md already has a section for {version}")
-    if not text.strip():
-        text = HEADER
 
     lines = text.splitlines(keepends=True)
     first = next((i for i, l in enumerate(lines) if _HEAD.match(l.rstrip("\n"))), len(lines))
@@ -79,12 +75,12 @@ def add_release(text: str, version: str, subjects: list[str], today: str) -> str
     if rest and _HEAD.match(rest[0].rstrip("\n")).group("v").lower() == "unreleased":
         end = next((i for i in range(1, len(rest)) if _HEAD.match(rest[i].rstrip("\n"))), len(rest))
         notes = [l[2:].strip() for l in rest[:end] if l.startswith("- ")]
-        rest = rest[end:]                               # the block is consumed either way
+        rest = rest[end:]
 
-    items = notes or subjects
-    if not items:
-        raise ValueError("nothing to release: no Unreleased notes and no commits since the last tag")
-    return head + format_section(version, today, items) + "".join(rest)
+    if not notes:
+        raise ValueError("no release notes: add them under '## [Unreleased]' at the top of "
+                         "CHANGELOG.md — plain language, for the people using the app")
+    return head + format_section(version, today, notes) + "".join(rest)
 
 
 def _git(repo: str, *args: str) -> str:
@@ -93,6 +89,7 @@ def _git(repo: str, *args: str) -> str:
 
 
 def subjects_since_last_tag(repo: str = HERE) -> list[str]:
+    """What went in since the last release — a prompt for writing the notes."""
     try:
         last = _git(repo, "describe", "--tags", "--abbrev=0").strip()
         rng = [f"{last}..HEAD"]
@@ -131,18 +128,14 @@ def load(path: str = PATH) -> list[dict]:
 if __name__ == "__main__":
     if len(sys.argv) != 3 or sys.argv[1] != "release":
         sys.exit("usage: python3 changelog.py release X.Y.Z")
-    version = sys.argv[2]
+    version, today = sys.argv[2], datetime.date.today().isoformat()
+    with open(PATH, encoding="utf-8") as fh:
+        text = fh.read()
     try:
-        with open(PATH, encoding="utf-8") as fh:
-            text = fh.read()
-    except OSError:
-        text = ""
-    try:
-        new = add_release(text, version, subjects_since_last_tag(),
-                          datetime.date.today().isoformat())
+        new = add_release(text, version, today)
     except ValueError as e:
-        sys.exit(f"✗ {e}")
+        commits = "".join(f"\n    {s}" for s in subjects_since_last_tag())
+        sys.exit(f"✗ {e}" + (f"\n  commits since the last release:{commits}" if commits else ""))
     with open(PATH, "w", encoding="utf-8") as fh:
         fh.write(new)
-    print(format_section(version, datetime.date.today().isoformat(),
-                         parse(new)[0]["items"]).rstrip())
+    print(format_section(version, today, parse(new)[0]["items"]).rstrip())

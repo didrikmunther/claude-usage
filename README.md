@@ -116,11 +116,12 @@ with local edits or unpushed commits is left untouched.
 ./release.sh 0.2.0    # add the CHANGELOG section, bump VERSION, commit, tag v0.2.0, push
 ```
 
-Every release gets a section in [`CHANGELOG.md`](CHANGELOG.md). By default it's
-the commit subjects since the previous tag; to write the notes yourself, put them
-under a `## [Unreleased]` heading at the top and `release.sh` uses those instead.
-After an update the dashboard shows everything that changed since the version you
-were on, once; click the version in the footer to read the full log any time.
+Before releasing, write the notes under a `## [Unreleased]` heading at the top of
+[`CHANGELOG.md`](CHANGELOG.md) and commit them; `release.sh` turns that into the
+version's section and refuses to release without it. Users read these after
+updating, so keep them high level and non-technical: what they'll notice, not how
+it works. The dashboard shows everything since the version they were on, once;
+clicking the version in the footer shows the full log.
 
 > The check reaches GitHub over your existing git auth, so on a **private** repo
 > only accounts with access can update. Make the repo public for others to

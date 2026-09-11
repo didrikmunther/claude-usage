@@ -12,9 +12,8 @@ V="${1:-}"
 [ -z "$(git status --porcelain)" ] || { echo "✗ commit/stash your changes first"; exit 1; }
 git rev-parse "v$V" >/dev/null 2>&1 && { echo "✗ tag v$V already exists"; exit 1; }
 
-# The changelog section: hand-written notes under "## [Unreleased]" if there are
-# any, else the commit subjects since the last tag. Runs before VERSION is
-# touched, so a failure here (e.g. nothing to release) leaves the tree clean.
+# Promote CHANGELOG.md's "## [Unreleased]" notes to this version's section. They
+# are required; without them this stops before VERSION is touched, tree clean.
 python3 "$DIR/changelog.py" release "$V"
 echo "$V" > VERSION
 git add VERSION CHANGELOG.md

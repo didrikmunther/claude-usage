@@ -1,185 +1,166 @@
 # Changelog
 
-What changed in each release, newest first.
+What's new in each version, newest first.
+
+## [Unreleased]
+- The "What's new" notes are now easier to read, including the ones for earlier versions.
 
 ## [0.15.0] - 2026-09-11
-- dashboard: catch up after a pause instead of warning of stale data
-- changelog: show what's new after an update
+- After an update you now get a short summary of what's new. Click the version number at the bottom of the dashboard to see the full history any time.
+- Fixed a false "no new samples" warning that could appear when opening the menu-bar panel.
 
 ## [0.14.1] - 2026-09-11
-- dashboard: place the chat bars by last use, not creation
+- The chat spending chart now puts each chat on the day you last used it, not the day you started it.
 
 ## [0.14.0] - 2026-09-11
-- settings: working days, behind a cogwheel
+- New settings (the ⚙ button): pick the days you work, so forecasts don't expect usage on your days off.
 
 ## [0.13.2] - 2026-09-10
-- dashboard: range control back inside the chart card
+- The chart range buttons are back inside the chart.
 
 ## [0.13.1] - 2026-09-10
-- dashboard: split the two pickers, and floor the forecast at current usage
+- Forecasts no longer predict less than you've already used.
+- Clearer controls above the charts.
 
 ## [0.13.0] - 2026-09-10
-- predict: the cone is each model's own error, and one control bar for both charts
+- The shaded area around a forecast now reflects how accurate that forecast has actually been for you.
+- One set of controls now drives both charts.
 
 ## [0.12.1] - 2026-09-10
-- predict: delete the block-bootstrap cone, now unused
+- Behind-the-scenes cleanup.
 
 ## [0.12.0] - 2026-09-10
-- predict: every model returns a calibrated band, not a bare line
+- Forecasts now show a shaded range of likely outcomes, not just a single line.
 
 ## [0.11.2] - 2026-09-10
-- predict: the cycle after a reset is not empty
+- Fixed forecasts right after your limit resets.
 
 ## [0.11.1] - 2026-09-10
-- predict: adaptive decays to the sustained pace, not to zero
+- The Adaptive forecast now follows your usual pace instead of dropping to zero.
 
 ## [0.11.0] - 2026-09-10
-- predict: add "adaptive", and make it the default
+- New "Adaptive" forecast that adjusts to how you're working right now. It's the new default.
 
 ## [0.10.0] - 2026-09-10
-- forecast: one trajectory behind the chart, the text row and the pill
+- The charts, the forecast text and the floating widget now always show the same forecast.
 
 ## [0.9.3] - 2026-09-10
-- dashboard: draw the charts after the reset instants are known
+- Fixed the charts briefly showing a wrong forecast when the dashboard opens.
 
 ## [0.9.2] - 2026-09-10
-- dashboard: stop the chat hover box flickering and chasing the cursor
+- Smoother hovering on the chat spending chart.
 
 ## [0.9.1] - 2026-09-09
-- ccost: stop double-counting turns, and price Opus at its real rate
+- More accurate spending estimates.
 
 ## [0.9.0] - 2026-09-09
-- dashboard: All / Today modes for the spend bars
+- The spending chart can now show all time or just today.
 
 ## [0.8.1] - 2026-09-09
-- dashboard: bars show share of provider spend, not of one model
+- Spending bars now show each chat's share of the total.
 
 ## [0.8.0] - 2026-09-09
-- dashboard: per-chat spend chart, and one colour per provider
+- New chart showing what each chat would have cost at API prices.
+- Claude and Codex now each have their own colour throughout.
 
 ## [0.7.2] - 2026-09-09
-- dashboard: show y values in the cursor readout, and fix Codex's series labels
+- Hovering over a chart now shows the exact values.
 
 ## [0.7.1] - 2026-09-09
-- dashboard: show the timestamp under the cursor on both charts
-- docs: refresh the dashboard screenshot
+- Hovering over a chart now shows the time.
 
 ## [0.7.0] - 2026-09-09
-- widget: show where you land, name the window, drop decimals, shrink to 80%
-- dashboard: backtest the forecast models against your own history
-- Revert "widget: invert the pill's sign convention — + now means hitting the limit"
+- The floating widget shows where you'll end up by the next reset.
+- New: see how accurate each forecast method has been on your own history.
 
 ## [0.6.3] - 2026-09-08
-- widget: invert the pill's sign convention — + now means hitting the limit
+- Changed the meaning of the widget's +/− sign (undone in the next version).
 
 ## [0.6.2] - 2026-09-08
-- poller: close the cookie-db connection — it leaked a descriptor per poll
+- Fixed a problem that could slowly build up when the app ran for a long time.
 
 ## [0.6.1] - 2026-09-08
-- widget: drop the pill's drop shadow, swap the mark colours
+- A cleaner look for the floating widget.
 
 ## [0.6.0] - 2026-09-08
-- widget: reshape as a pill showing one signed margin per platform
+- The floating widget is now a compact pill showing how much room you have left on each service.
 
 ## [0.5.0] - 2026-09-07
-- widget: floating always-on-top panel with the forecast lines
+- New floating widget: a small always-on-top window with your forecasts.
 
 ## [0.4.4] - 2026-09-07
-- poller: a failed poll can no longer kill sampling; warn when data is stale
+- The app keeps collecting data even if one check fails, and tells you when data is out of date.
 
 ## [0.4.3] - 2026-09-04
-- forecast: cycle+tod predicts a distribution; fix range-dependent staleness
+- Better forecasts.
+- Fixed a false "out of date" warning on some chart ranges.
 
 ## [0.4.2] - 2026-09-04
-- dashboard: remove the numbered spike badges + Spike-window control
-- docs: update dashboard screenshot to the current UI
+- Simpler charts.
 
 ## [0.4.1] - 2026-09-04
-- dashboard: wire authoritative resets, drop metric cards + Spark line
-- change: default port 8787 -> 44405
-- fix: project Codex resets on the authoritative window, not inferred drops
+- Reset times now come straight from Claude and Codex, so they're exact.
+- A simpler dashboard layout.
+- The dashboard has a new address: http://127.0.0.1:44405
 
 ## [0.4.0] - 2026-09-03
-- chore: gitignore .build/ (local Swift-rewrite build artifacts)
-- fix: anchor cycle+tod hour-of-day rates to the overall rate (no flat tail)
-- feat: blend recent trailing slope into cycle+tod (reactive forecast)
-- feat: recency-weight the rate estimators (3-day half-life)
-- feat: derive the 7-day forecast from the 5-hour projection
-- feat: cycle + time-of-day predictor (now the default)
-- fix: 7-day forecast cut off when the two lines project differently
-- feat: reset-aware cycle projection + default to cycle
-- feat: forecast-method selector (Linear / Cycle)
-- feat: reset-aware 'cycle' predictor
-- feat: forecast projection in dashboard charts (rightmost 25%)
-- feat: generic usage-prediction interface + linear strategy
-- Design spec: generic usage-prediction interface
+- Forecasts: the charts now show where your usage is heading before the next reset.
+- Choose between forecast methods. Forecasts take your time-of-day habits and recent pace into account.
 
 ## [0.3.7] - 2026-08-27
-- Codex gauge: fixed 0–8 %/h dial
+- The Codex gauge now uses a fixed scale.
 
 ## [0.3.6] - 2026-08-27
-- Self-heal Claude 404 from a stale org (account/org switch)
+- Fixed Claude usage disappearing after switching accounts.
 
 ## [0.3.5] - 2026-08-26
-- Harden zen-mode persistence across restarts
+- Zen mode now stays on after restarts.
 
 ## [0.3.4] - 2026-08-26
-- Add menu-bar zen mode; gentler CLI polling + friendlier rate-limit banner
+- New Zen mode for a quieter menu bar.
+- Clearer message when Claude is rate-limiting the app.
 
 ## [0.3.3] - 2026-08-26
-- Add steam animation to the gauge when over the dial max
+- The gauge lets off steam when you're using your limit very fast.
 
 ## [0.3.2] - 2026-08-26
-- Vibrate the gauge needle when over the dial max
+- The gauge needle shakes when you're using your limit faster than its scale.
 
 ## [0.3.1] - 2026-08-25
-- Codex chart cleanup: drop 5-hour, unify 7-day color, reorder forecast
+- A simpler Codex chart.
 
 ## [0.3.0] - 2026-08-25
-- Include Codex in the API-equivalent spend figure
+- The spending estimate now includes Codex.
 
 ## [0.2.7] - 2026-08-25
-- Fix blank menu-bar webview when the server isn't up at launch
+- Fixed the menu-bar panel sometimes opening blank.
 
 ## [0.2.6] - 2026-08-25
-- Menu bar: rev gauge on rising usage; tighten box margins, pad content
+- The menu-bar gauge revs up when your usage rises, and the layout is tidier.
 
 ## [0.2.5] - 2026-08-24
-- Footer button doubles as an "Update to vX" button when one is available
+- When an update is available, one click installs it.
 
 ## [0.2.4] - 2026-08-24
-- Fix dark-mode chart visibility: axis numbers + zoom selection
+- Charts are easier to read in dark mode.
 
 ## [0.2.3] - 2026-08-24
-- Show spike badges on the Codex chart
+- Usage spikes are now marked on the Codex chart too.
 
 ## [0.2.2] - 2026-08-21
-- Refine burn-rate gauges: menu-bar backdrop, 0–100 Claude scale, readout
-- README: update hero screenshot to the current dashboard
+- Nicer-looking gauges.
 
 ## [0.2.1] - 2026-08-21
-- Fix Codex burn-rate gauge (window-relative, binding window)
+- Fixed the Codex gauge.
 
 ## [0.2.0] - 2026-08-20
-- Add burn-rate gauges (web dashboard + menu bar)
+- New gauges show how fast you're using your limits, in the dashboard and the menu bar.
 
 ## [0.1.2] - 2026-08-20
-- Add "Check for updates" button
+- New "Check for updates" button.
 
 ## [0.1.1] - 2026-08-20
-- Fix update banner always visible: guard the hidden attribute
-- Fix update banner hanging on "Updating…" when no update starts
+- Fixed issues with the update banner.
 
 ## [0.1.0] - 2026-08-20
-- Add self-updater: check GitHub release tags, one-click update
-- Prefer desktop app for Claude; make CLI a rate-limit-aware fallback
-- Menu bar: stack Claude + Codex rows with icons when both have data
-- Read Claude usage from the CLI OAuth token, no desktop app needed
-- Add API-equivalent spend strip to dashboard
-- Widget view: hide title via ?widget=1; move status to per-column dots
-- README: add 'Give this to your agent' block + install.md
-- Update README with image and app details
-- Chart header: stack 'used' tally under the legend, fix narrow-view wrapping
-- Make it installable by others: README, install prereqs, uninstall
-- Menu bar: embed live dashboard as a WKWebView popover
-- Initial commit: Claude & Codex usage dashboard
+- First release: your Claude and Codex usage in the menu bar and a live dashboard, with history charts, estimated spending and one-click updates.
