@@ -663,11 +663,16 @@ function renderTopChats() {
     ...((ccClaude && ccClaude[k]) || []).map((r) => ({ ...r, src: "Claude" })),
     ...((ccCodex && ccCodex[k]) || []).map((r) => ({ ...r, src: "Codex" })),
   ].filter((r) => r.pct > 0);
+  // Placed by LAST use, not creation. A long thread accrues most of its cost
+  // late, and plotting it on the day it was opened puts the bar days away from
+  // the spending it represents — and out of step with the Today filter, which
+  // has always asked when a session was last active.
+  const at = (r) => new Date(r.end || r.when);
   // Today's chats all share one date, so an x axis of dates says nothing —
   // rank them by spend instead. Across all history the date is the point.
   rows.sort(ccMode === "today"
     ? (a, b) => b.pct - a.pct
-    : (a, b) => new Date(a.when) - new Date(b.when));
+    : (a, b) => at(a) - at(b));
   if (!rows.length) {
     $("ccTop").innerHTML = `<div class="muted">no chats today yet</div>`;
     return;
@@ -680,7 +685,7 @@ function renderTopChats() {
   const ends = ccMode === "today"
     ? ["most spent", "least"]
     : [rows[0], rows[rows.length - 1]].map((r) =>
-        new Date(r.when).toLocaleDateString([], { month: "short", day: "numeric" }));
+        at(r).toLocaleDateString([], { month: "short", day: "numeric" }));
   const mid = ccMode === "today"
     ? `${rows.length} chats today · ${fmtMoney(rows.reduce((a, r) => a + r.cost, 0))}`
     : "";
@@ -729,7 +734,11 @@ function wireChatTip() {
       ["started", when.toLocaleString([], { month: "short", day: "numeric",
         hour: "2-digit", minute: "2-digit", hour12: false })],
     ];
-    if (r.end) rows_.push(["ran for", fmtDur((new Date(r.end) - when) / 1000)]);
+    if (r.end) {
+      rows_.push(["last used", new Date(r.end).toLocaleString([], {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })]);
+      rows_.push(["ran for", fmtDur((new Date(r.end) - when) / 1000)]);
+    }
     if (r.branch) rows_.push(["branch", r.branch]);
     if (r.calls) rows_.push(["API calls", r.calls.toLocaleString()]);
     rows_.push(["share of " + r.src, r.pct.toFixed(1) + "%"]);
