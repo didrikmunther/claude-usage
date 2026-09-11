@@ -8,6 +8,8 @@ import threading
 DEFAULT_INTERVAL = 60
 # Default is "adaptive": it beat every other predictor on held-out history.
 DEFAULT_FORECAST_MODEL = "adaptive"
+# Every day, so the setting changes nothing until it is deliberately narrowed.
+DEFAULT_WORKING_DAYS = "0,1,2,3,4,5,6"
 MIN_INTERVAL = 10
 MAX_INTERVAL = 3600
 
@@ -75,6 +77,24 @@ class Store:
                 (model,))
             self._db.commit()
         return model
+
+    # Local weekday numbers you work on (0 = Sunday). All seven = no effect.
+    # Server-side for the same reason the forecast model is: the floating pill
+    # has no persistent storage of its own.
+    def get_working_days(self) -> str:
+        with self._lock:
+            cur = self._db.execute("SELECT value FROM config WHERE key='working_days'")
+            r = cur.fetchone()
+        return r[0] if r else DEFAULT_WORKING_DAYS
+
+    def set_working_days(self, days: str) -> str:
+        clean = ",".join(sorted({d for d in str(days).split(",") if d in "0123456" and d != ""}))
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO config (key, value) VALUES ('working_days', ?)",
+                (clean,))
+            self._db.commit()
+        return clean
 
     def get_interval(self) -> int:
         with self._lock:

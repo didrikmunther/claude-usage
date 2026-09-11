@@ -166,7 +166,27 @@
       <span id="updated" class="muted upd"></span>
       <button id="checkUpdate" class="btn">Check for updates</button>
       <span id="version" class="muted ver"></span>
+      <button id="gear" class="btn gear" title="Settings" aria-label="Settings">⚙</button>
     </footer>
+
+    <section id="settings" class="card settings" hidden>
+      <div class="set-row">
+        <div>
+          <div class="set-title">Working days</div>
+          <div class="set-sub muted">The forecast holds flat on the days you leave off,
+            instead of projecting usage you will not make.</div>
+        </div>
+        <div id="workDays" class="seg seg-sm">
+          <button data-d="1">Mon</button>
+          <button data-d="2">Tue</button>
+          <button data-d="3">Wed</button>
+          <button data-d="4">Thu</button>
+          <button data-d="5">Fri</button>
+          <button data-d="6">Sat</button>
+          <button data-d="0">Sun</button>
+        </div>
+      </div>
+    </section>
   </main>
 
   <script src="/static/vendor/uPlot.iife.min.js"></script>

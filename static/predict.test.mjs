@@ -545,3 +545,34 @@ test("nothing in the live cycle sits below what is already spent", () => {
     });
   }
 });
+
+// ---- working days --------------------------------------------------------
+const { gateWorkDays } = mod;
+
+test("gateWorkDays holds the projection flat on days off", () => {
+  // 00:00 Thu 1 Jan 1970 is a Thursday (day 4); walk hourly across the weekend.
+  const start = Date.UTC(2026, 0, 2, 12) / 1000;          // Fri 2 Jan 2026
+  const pts = Array.from({ length: 96 }, (_, i) => ({ t: start + i * 3600, y: i }));
+  const days = [1, 2, 3, 4, 5];                           // Mon-Fri
+  const out = gateWorkDays(pts, { workDays: days });
+  for (let i = 1; i < out.length; i++) {
+    const d = new Date(out[i].t * 1000).getDay();
+    const moved = out[i].y > out[i - 1].y + 1e-9;
+    if (!days.includes(d)) assert.ok(!moved, `climbed on day ${d}`);
+  }
+  assert.ok(out[out.length - 1].y < pts[pts.length - 1].y, "a weekend must cost some climb");
+});
+
+test("gateWorkDays does nothing when every day is a working day", () => {
+  const pts = [{ t: 0, y: 0 }, { t: 3600, y: 5 }, { t: 7200, y: 9 }];
+  assert.equal(gateWorkDays(pts, { workDays: [0, 1, 2, 3, 4, 5, 6] }), pts);
+  assert.equal(gateWorkDays(pts, {}), pts);
+  assert.equal(gateWorkDays(pts, { workDays: [] }), pts);
+});
+
+test("gateWorkDays still lets a reset through on a day off", () => {
+  const sat = Date.UTC(2026, 0, 3, 6) / 1000;             // Sat 3 Jan 2026
+  const pts = [{ t: sat, y: 80 }, { t: sat + 3600, y: 0 }, { t: sat + 7200, y: 0 }];
+  const out = gateWorkDays(pts, { workDays: [1, 2, 3, 4, 5] });
+  assert.equal(out[1].y, 0, "the window empties on schedule, calendar or not");
+});

@@ -19,6 +19,41 @@ const FORECAST_MODELS = ["adaptive", "linear", "cycle", "cycle+tod"];
 // Arrives on the WebSocket "init" and on every "forecast_model" broadcast.
 let forecastModel = "adaptive";
 
+// Local weekday numbers you work on (0 = Sunday). Server-owned, like the model:
+// all seven means the setting is off and nothing changes.
+let workingDays = [0, 1, 2, 3, 4, 5, 6];
+
+function setWorkingDays(csv) {
+  const next = String(csv || "").split(",").filter((d) => d !== "").map(Number);
+  if (JSON.stringify(next) === JSON.stringify(workingDays)) return;
+  workingDays = next;
+  paintWorkingDays();
+  projCache.clear();
+  applyRangeAll();
+  accLast = 0; scoreForecasts();
+}
+
+function paintWorkingDays() {
+  document.querySelectorAll("#workDays button").forEach(
+    (b) => b.classList.toggle("on", workingDays.includes(Number(b.dataset.d))));
+}
+
+function wireSettings() {
+  const gear = $("gear"), panel = $("settings");
+  if (!gear || !panel) return;
+  gear.addEventListener("click", () => { panel.hidden = !panel.hidden; });
+  panel.querySelectorAll("#workDays button").forEach((b) =>
+    b.addEventListener("click", () => {
+      const d = Number(b.dataset.d);
+      const next = workingDays.includes(d)
+        ? workingDays.filter((x) => x !== d) : [...workingDays, d].sort();
+      // Every day off would leave the forecast permanently flat, so keep one.
+      if (!next.length) return;
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ set_working_days: next.join(",") }));
+    }));
+  paintWorkingDays();
+}
+
 function setForecastModel(m) {
   if (!FORECAST_MODELS.includes(m) || m === forecastModel) return;
   forecastModel = m;
@@ -220,7 +255,7 @@ function withProjection(tsFull, aFull, bFull, rst, rangeSecs) {
   const step = 3600;
   const P = Predictors[forecastModel] || Predictors.linear;
 
-  const rA = P.predict(toSamples(tsFull, aFull), { now, horizon, step, reset: rst && rst.a });
+  const rA = P.predict(toSamples(tsFull, aFull), { now, horizon, step, reset: rst && rst.a, workDays: workingDays });
   const projA = rA.points, loA = rA.lo || null, hiA = rA.hi || null;
   let projB, loB = null, hiB = null;
   const ratio = consumptionRatio(aFull, bFull);
@@ -231,7 +266,7 @@ function withProjection(tsFull, aFull, bFull, rst, rangeSecs) {
   } else {
     // Model returns a distribution (or no ratio): forecast b independently so it
     // gets its own point line + uncertainty band.
-    const rB = P.predict(toSamples(tsFull, bFull), { now, horizon, step, reset: rst && rst.b });
+    const rB = P.predict(toSamples(tsFull, bFull), { now, horizon, step, reset: rst && rst.b, workDays: workingDays });
     projB = rB.points; loB = rB.lo || null; hiB = rB.hi || null;
   }
 
@@ -402,7 +437,7 @@ function windowProjection(st, col, resetIso, reset) {
   const P = Predictors[forecastModel] || Predictors.linear;
   let pts = null;
   try {
-    pts = P.predict(toSamples(ts, st.data[col]), { now, horizon, step: 3600, reset }).points;
+    pts = P.predict(toSamples(ts, st.data[col]), { now, horizon, step: 3600, reset, workDays: workingDays }).points;
   } catch { pts = null; }
   if (projCache.size > 12) projCache.clear();      // keys rotate on every sample
   projCache.set(key, pts);
@@ -819,6 +854,7 @@ function connect() {
       if (m.update) renderUpdate(m.update);
       setIntervalUI(m.interval);
       if (m.forecast_model) setForecastModel(m.forecast_model);
+      if (m.working_days != null) setWorkingDays(m.working_days);
       setStatus(m.status);
       updateGauges();                       // set targets from history before revving
       scoreForecasts();
@@ -835,11 +871,12 @@ function connect() {
       renderUpdate(m.update);
     } else if (m.type === "status") {
       setStatus(m.status);
+    } else if (m.type === "working_days") {
+      setWorkingDays(m.working_days);
     } else if (m.type === "forecast_model") {
       setForecastModel(m.forecast_model);
     } else if (m.type === "interval") {
       setIntervalUI(m.interval);
-      if (m.forecast_model) setForecastModel(m.forecast_model);
     }
   };
 }
@@ -1144,6 +1181,7 @@ window.addEventListener("load", () => {
   wireForecastModel();
   wireAccuracy();
   wireChatTip();
+  wireSettings();
   wireChatMode();
   wireUpdate();
   wireCheckUpdate();

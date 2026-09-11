@@ -51,6 +51,7 @@ function outlook(cur, winMs, resetIso, samples, proj) {
 // Which predictor to use. The server owns it, so the pill and the dashboard
 // cannot disagree; this web view has no persistent storage of its own.
 let forecastModel = "adaptive";
+let workingDays = [0, 1, 2, 3, 4, 5, 6];   // server-owned, same as the model
 
 // The pill re-renders every second and cycle+tod is a simulation, so the
 // trajectory is cached until the data, the model or the reset moves.
@@ -61,12 +62,13 @@ function projection(st, col, resetIso, reset) {
   const now = ts[ts.length - 1];
   const horizon = new Date(resetIso).getTime() / 1000 - now;
   if (!(horizon > 0)) return null;
-  const key = `${st === C ? "c" : "x"}|${col}|${forecastModel}|${now}|${resetIso}`;
+  const key = `${st === C ? "c" : "x"}|${col}|${forecastModel}|${workingDays}|${now}|${resetIso}`;
   if (projCache.has(key)) return projCache.get(key);
   const P = Predictors[forecastModel] || Predictors.linear;
   let pts = null;
   try {
-    pts = P.predict(toPts(ts, st.data[col]), { now, horizon, step: 3600, reset }).points;
+    pts = P.predict(toPts(ts, st.data[col]),
+                    { now, horizon, step: 3600, reset, workDays: workingDays }).points;
   } catch { pts = null; }
   if (projCache.size > 8) projCache.clear();
   projCache.set(key, pts);
@@ -191,9 +193,11 @@ function connect() {
       if (m.claude) { C.last = m.claude; if (m.claude.resets) C.resets = m.claude.resets; }
       if (m.codex) X.last = m.codex;
       if (m.forecast_model) forecastModel = m.forecast_model;
+      if (m.working_days != null) workingDays = String(m.working_days).split(",").filter(Boolean).map(Number);
       render();
-    } else if (m.type === "forecast_model") {
-      forecastModel = m.forecast_model;
+    } else if (m.type === "forecast_model" || m.type === "working_days") {
+      if (m.forecast_model) forecastModel = m.forecast_model;
+      if (m.working_days != null) workingDays = String(m.working_days).split(",").filter(Boolean).map(Number);
       projCache.clear();
       render();
     } else if (m.type === "sample") {

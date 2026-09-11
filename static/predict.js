@@ -479,7 +479,31 @@ function spreadAt(spread, hours) {
 // Attach a band to a plain trajectory. The band is anchored on the value each
 // cycle starts from, so it collapses at a reset and reopens afterwards rather
 // than carrying the old cycle's uncertainty across the boundary.
+// Hold the projection flat on days you do not work. The increments a model
+// produced are kept, but only applied on working days — so a forecast stops
+// climbing through a Saturday instead of inventing usage that will not happen.
+// A reset still lands on its own schedule; the calendar does not stop it.
+//
+// opts.workDays is a list of local weekday numbers (0 = Sunday). Absent, empty
+// or all seven means every day counts, and nothing changes.
+function gateWorkDays(points, opts) {
+  const days = opts && opts.workDays;
+  if (!Array.isArray(days) || !days.length || days.length >= 7) return points;
+  const work = new Set(days);
+  if (!points.length) return points;
+  const out = [{ t: points[0].t, y: points[0].y }];
+  for (let i = 1; i < points.length; i++) {
+    const step = points[i].y - points[i - 1].y;
+    const prev = out[i - 1].y;
+    if (step < -5) { out.push({ t: points[i].t, y: points[i].y }); continue; }  // a reset
+    const on = work.has(new Date(points[i].t * 1000).getDay());
+    out.push({ t: points[i].t, y: Math.max(0, Math.min(100, prev + (on ? step : 0))) });
+  }
+  return out;
+}
+
 function withBand(pts, points, opts, method) {
+  points = gateWorkDays(points, opts);
   if (opts && opts.bare) return { points, method };     // inside a residual replay
   const resid = residualSpread(pts, opts, method);
   const moved = bandSpread(pts);
@@ -639,5 +663,5 @@ const Predictors = {
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, bandSpread, residualSpread, withBand, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset };
+  module.exports = { Predictors, bandSpread, residualSpread, withBand, gateWorkDays, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset };
 }

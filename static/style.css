@@ -100,6 +100,12 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
 .cc-bars .cc-bar:hover { opacity: 1; }
 .cc-axis { display: flex; justify-content: space-between; font-size: 11px; margin-top: 6px; }
 
+.gear { padding: 5px 10px; font-size: 14px; line-height: 1; }
+.settings { padding: 14px 16px; margin-top: -12px; margin-bottom: 24px; }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.set-title { font-size: 13px; font-weight: 600; }
+.set-sub { font-size: 12px; max-width: 46ch; margin-top: 2px; }
+
 /* forecast-accuracy table */
 .acc-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
 .acc-body { font-size: 13px; }
