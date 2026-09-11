@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import ccost
+import changelog
 import codex_cost
 import claude_cli
 import codex_poller
@@ -75,6 +76,7 @@ class Hub:
         self.interval: int = 60
         self.forecast_model: str = DEFAULT_FORECAST_MODEL
         self.working_days: str = DEFAULT_WORKING_DAYS
+        self.changelog_seen: str | None = None
         self.latest: dict | None = None
         self.codex_latest: dict | None = None
         self.codex_available: bool = False
@@ -108,6 +110,14 @@ class Hub:
         self.interval = self.store.get_interval()
         self.forecast_model = self.store.get_forecast_model()
         self.working_days = self.store.get_working_days()
+        # Seed "last changelog shown" on the first changelog-aware start: the
+        # version this install ran before its latest update, else the current one
+        # — a fresh install is not shown the entire history.
+        seen = self.store.get_changelog_seen()
+        if seen is None:
+            seen = changelog.previous_version() or updater.current_version()
+            self.store.set_changelog_seen(seen)
+        self.changelog_seen = seen
 
     def _pick_claude_source(self) -> str | None:
         """Prefer the desktop app's cookie endpoint — it tolerates fast (60s)
@@ -137,6 +147,15 @@ class Hub:
                 dead.append(ws)
         for ws in dead:
             self.clients.discard(ws)
+
+    def changelog_pending(self) -> list:
+        """Sections released since the one this install last showed."""
+        return changelog.pending(changelog.load(), self.changelog_seen,
+                                 updater.current_version())
+
+    def ack_changelog(self) -> None:
+        self.changelog_seen = updater.current_version()
+        self.store.set_changelog_seen(self.changelog_seen)
 
     def set_working_days(self, days: str) -> str:
         self.working_days = self.store.set_working_days(days)
@@ -377,6 +396,14 @@ async def api_latest():
                          "working_days": hub.working_days})
 
 
+@app.get("/api/changelog")
+async def api_changelog():
+    """The full released history, newest first — behind the footer's version."""
+    cur = updater.current_version()
+    return JSONResponse({"current": cur,
+                         "entries": changelog.pending(changelog.load(), None, cur)})
+
+
 @app.post("/api/update")
 async def api_update():
     info = hub.update_info
@@ -418,6 +445,8 @@ async def ws(sock: WebSocket):
         "xcost": hub.xcost_latest,
         "xcost_available": hub.xcost_available,
         "update": hub.update_info,
+        "changelog": hub.changelog_pending(),
+        "changelog_from": hub.changelog_seen,
         "status": hub.status,
         "interval": hub.interval,
         "forecast_model": hub.forecast_model,
@@ -436,6 +465,9 @@ async def ws(sock: WebSocket):
             elif "set_working_days" in msg:
                 d = hub.set_working_days(msg["set_working_days"])
                 await hub.broadcast({"type": "working_days", "working_days": d})
+            elif msg.get("ack_changelog"):
+                hub.ack_changelog()
+                await hub.broadcast({"type": "changelog", "changelog": []})
             elif msg.get("poll_now"):
                 hub.poll_now()
     except WebSocketDisconnect:

@@ -623,6 +623,7 @@ function setIntervalUI(n) {
 
 // ---- websocket ----
 let ws = null, backoff = 500;
+let bootVersion = null;   // the version this page's own scripts came from
 // ---- API-equivalent spend (Claude Code token logs priced at list rates) ----
 function fmtMoney(n) {
   if (n == null) return "–";
@@ -760,6 +761,59 @@ function wireChatTip() {
   host.addEventListener("mouseleave", () => { const t = $("ccTip"); if (t) t.hidden = true; });
 }
 
+// ---- changelog ----
+// After an update the server sends every section since the version this install
+// last showed; "Got it" acknowledges them so they appear once. The footer's
+// version opens the full history, read-only.
+let wnMode = null;                     // "update" acknowledges on close, "view" does not
+
+function renderChangelog(entries, mode, sub) {
+  const body = $("wnBody");
+  if (!body || !entries || !entries.length) return;
+  body.textContent = "";               // built with textContent: commit text is never markup
+  for (const e of entries) {
+    const h = document.createElement("div");
+    h.className = "wn-ver";
+    h.textContent = "v" + e.version;
+    if (e.date) {
+      const d = document.createElement("span");
+      d.className = "muted"; d.textContent = e.date; h.appendChild(d);
+    }
+    const ul = document.createElement("ul");
+    for (const it of e.items) {
+      const li = document.createElement("li"); li.textContent = it; ul.appendChild(li);
+    }
+    body.append(h, ul);
+  }
+  $("wnTitle").textContent = mode === "update" ? "What's new" : "Changelog";
+  $("wnSub").textContent = sub || "";
+  $("wnOk").textContent = mode === "update" ? "Got it" : "Close";
+  wnMode = mode;
+  $("whatsNew").hidden = false;
+}
+
+function closeChangelog() {
+  const modal = $("whatsNew");
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  if (wnMode === "update" && ws && ws.readyState === 1) ws.send(JSON.stringify({ ack_changelog: true }));
+  wnMode = null;
+}
+
+function wireChangelog() {
+  const ok = $("wnOk"), modal = $("whatsNew"), ver = $("version");
+  if (!ok || !modal) return;
+  ok.addEventListener("click", closeChangelog);
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeChangelog(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeChangelog(); });
+  if (ver) ver.addEventListener("click", async () => {
+    try {
+      const r = await (await fetch("/api/changelog")).json();
+      renderChangelog(r.entries, "view", r.current ? "you are on v" + r.current : "");
+    } catch { /* server unreachable: nothing to show */ }
+  });
+}
+
 // ---- self-update banner ----
 let lastUpdate = null;
 function updateReady() {
@@ -852,6 +906,9 @@ function connect() {
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === "init") {
+      const running = m.update && m.update.current;
+      if (bootVersion && running && running !== bootVersion) { location.reload(); return; }
+      bootVersion = bootVersion || running;
       if (m.limits) bounds = m.limits;
       $("ival").min = bounds.min; $("ivalNum").min = bounds.min; $("ivalNum").max = bounds.max;
       loadHistory(m.history || []);
@@ -864,6 +921,10 @@ function connect() {
       setIntervalUI(m.interval);
       if (m.forecast_model) setForecastModel(m.forecast_model);
       if (m.working_days != null) setWorkingDays(m.working_days);
+      if (m.changelog && m.changelog.length) {
+        renderChangelog(m.changelog, "update",
+          m.changelog_from ? "since v" + m.changelog_from : "");
+      }
       setStatus(m.status);
       updateGauges();                       // set targets from history before revving
       scoreForecasts();
@@ -880,6 +941,11 @@ function connect() {
       renderUpdate(m.update);
     } else if (m.type === "status") {
       setStatus(m.status);
+    } else if (m.type === "changelog") {
+      // acknowledged in another tab (or the menu-bar popover): close here too
+      if (!(m.changelog && m.changelog.length) && wnMode === "update") {
+        $("whatsNew").hidden = true; wnMode = null;
+      }
     } else if (m.type === "working_days") {
       setWorkingDays(m.working_days);
     } else if (m.type === "forecast_model") {
@@ -1191,6 +1257,7 @@ window.addEventListener("load", () => {
   wireAccuracy();
   wireChatTip();
   wireSettings();
+  wireChangelog();
   wireChatMode();
   wireUpdate();
   wireCheckUpdate();

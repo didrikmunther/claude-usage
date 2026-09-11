@@ -96,6 +96,20 @@ class Store:
             self._db.commit()
         return clean
 
+    # The newest release whose changelog this install has been shown. Absent until
+    # the server first starts on a changelog-aware version, which seeds it.
+    def get_changelog_seen(self) -> str | None:
+        with self._lock:
+            r = self._db.execute("SELECT value FROM config WHERE key='changelog_seen'").fetchone()
+        return r[0] if r else None
+
+    def set_changelog_seen(self, version: str) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO config (key, value) VALUES ('changelog_seen', ?)",
+                (version,))
+            self._db.commit()
+
     def get_interval(self) -> int:
         with self._lock:
             cur = self._db.execute("SELECT value FROM config WHERE key='interval'")

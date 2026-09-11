@@ -165,7 +165,7 @@
       </label>
       <span id="updated" class="muted upd"></span>
       <button id="checkUpdate" class="btn">Check for updates</button>
-      <span id="version" class="muted ver"></span>
+      <button id="version" class="linkbtn muted ver" title="Changelog"></button>
       <button id="gear" class="btn gear" title="Settings" aria-label="Settings">⚙</button>
     </footer>
 
@@ -187,6 +187,17 @@
         </div>
       </div>
     </section>
+
+    <div id="whatsNew" class="modal" hidden>
+      <div class="card modal-card" role="dialog" aria-modal="true" aria-labelledby="wnTitle">
+        <div class="wn-head">
+          <span id="wnTitle" class="wn-title">What's new</span>
+          <span id="wnSub" class="muted wn-sub"></span>
+        </div>
+        <div id="wnBody" class="wn-body"></div>
+        <div class="wn-foot"><button id="wnOk" class="btn">Got it</button></div>
+      </div>
+    </div>
   </main>
 
   <script src="/static/vendor/uPlot.iife.min.js"></script>

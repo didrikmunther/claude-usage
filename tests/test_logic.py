@@ -238,3 +238,83 @@ def test_cookie_rows_holds_no_descriptors():
         after = open_fds()
 
     assert after == before, f"leaked {after - before} descriptors over 60 reads"
+
+
+# ---- changelog -------------------------------------------------------------
+# After an update the dashboard shows every section between the version the
+# install last showed and the one now running, once.
+from changelog import (parse as cl_parse, pending as cl_pending,  # noqa: E402
+                       add_release, previous_version)
+
+CL = """# Changelog
+
+## [Unreleased]
+- a hand-written note
+
+## [0.14.1] - 2026-09-11
+- chart bars by last use
+
+## [0.14.0] - 2026-09-11
+- working days
+- a stray fix
+
+## [0.13.2] - 2026-09-10
+- range back in the card
+"""
+NO_NOTES = CL.replace("## [Unreleased]\n- a hand-written note\n\n", "")
+
+
+def test_changelog_parse():
+    e = cl_parse(CL)
+    assert [x["version"] for x in e] == ["Unreleased", "0.14.1", "0.14.0", "0.13.2"]
+    assert e[2]["items"] == ["working days", "a stray fix"]
+    assert e[1]["date"] == "2026-09-11"
+
+
+def test_changelog_pending_is_after_seen_up_to_current():
+    e = cl_parse(CL)
+    versions = lambda xs: [x["version"] for x in xs]
+    assert versions(cl_pending(e, "0.13.2", "0.14.1")) == ["0.14.1", "0.14.0"]   # newest first
+    assert cl_pending(e, "0.14.1", "0.14.1") == []                               # nothing new
+    assert versions(cl_pending(e, "0.13.2", "0.14.0")) == ["0.14.0"]             # never beyond installed
+    # seen=None is the whole released history; Unreleased is never shown
+    assert versions(cl_pending(e, None, "0.14.1")) == ["0.14.1", "0.14.0", "0.13.2"]
+
+
+def test_add_release_promotes_unreleased_notes_over_commits():
+    e = cl_parse(add_release(CL, "0.15.0", ["commit subject"], "2026-09-12"))
+    assert e[0] == {"version": "0.15.0", "date": "2026-09-12", "items": ["a hand-written note"]}
+    assert all(x["version"] != "Unreleased" for x in e)      # the block is consumed
+    assert [x["version"] for x in e[1:]] == ["0.14.1", "0.14.0", "0.13.2"]
+
+
+def test_add_release_falls_back_to_commit_subjects():
+    e = cl_parse(add_release(NO_NOTES, "0.15.0", ["one", "two"], "2026-09-12"))
+    assert e[0] == {"version": "0.15.0", "date": "2026-09-12", "items": ["one", "two"]}
+
+
+def test_add_release_refuses_duplicates_and_empty_releases():
+    import pytest
+    with pytest.raises(ValueError):
+        add_release(CL, "0.14.1", ["x"], "2026-09-12")       # already released
+    with pytest.raises(ValueError):
+        add_release(NO_NOTES, "0.15.0", [], "2026-09-12")    # nothing to say
+
+
+def test_add_release_to_a_missing_file_writes_the_header():
+    out = add_release("", "0.1.0", ["first"], "2026-09-12")
+    assert out.startswith("# Changelog")
+    assert cl_parse(out)[0]["items"] == ["first"]
+
+
+def test_previous_version_reads_where_the_updater_moved_from():
+    def fake(repo, *args):
+        if args[0] == "reflog":
+            return ("commit: something\n"
+                    "checkout: moving from 1a2b3c to tags/v0.14.1\n"
+                    "checkout: moving from 9f9f9f to tags/v0.13.0\n")
+        assert args == ("show", "1a2b3c:VERSION")          # the MOST RECENT move
+        return "0.13.2\n"
+    assert previous_version("/x", git=fake) == "0.13.2"
+    # a fresh clone never checked out a tag, so there is nothing to diff against
+    assert previous_version("/x", git=lambda repo, *a: "commit: initial\n") is None

@@ -106,6 +106,26 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
 .set-title { font-size: 13px; font-weight: 600; }
 .set-sub { font-size: 12px; max-width: 46ch; margin-top: 2px; }
 
+/* changelog modal. [hidden] is restated because .modal sets display, which
+   would otherwise beat the attribute and leave it permanently open. */
+.modal { position: fixed; inset: 0; z-index: 50; padding: 20px;
+  display: grid; place-items: center; background: rgba(15, 18, 25, .38); }
+.modal[hidden] { display: none; }
+.modal-card { width: min(560px, 100%); max-height: 75vh; display: flex; flex-direction: column;
+  padding: 16px 18px; margin: 0; }
+.wn-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.wn-title { font-size: 15px; font-weight: 600; }
+.wn-sub { font-size: 12px; }
+.wn-body { overflow-y: auto; font-size: 13px; }
+.wn-ver { font-weight: 600; margin: 12px 0 4px; }
+.wn-ver:first-child { margin-top: 0; }
+.wn-ver .muted { font-weight: 400; font-size: 12px; margin-left: 8px; }
+.wn-body ul { margin: 0; padding-left: 18px; }
+.wn-body li { margin: 2px 0; }
+.wn-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
+.linkbtn { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+.linkbtn:hover { text-decoration: underline; }
+
 /* forecast-accuracy table */
 .acc-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
 .acc-body { font-size: 13px; }
