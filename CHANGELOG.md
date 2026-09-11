@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.15.1] - 2026-09-11
 - The "What's new" notes are now easier to read, including the ones for earlier versions.
 
 ## [0.15.0] - 2026-09-11
