@@ -2,6 +2,10 @@
 
 What changed in each release, newest first.
 
+## [0.15.0] - 2026-09-11
+- dashboard: catch up after a pause instead of warning of stale data
+- changelog: show what's new after an update
+
 ## [0.14.1] - 2026-09-11
 - dashboard: place the chat bars by last use, not creation
 
