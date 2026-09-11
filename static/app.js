@@ -338,12 +338,21 @@ function renderConsumed() {
   }
 }
 
-function pushPoint(st, tsSec, a, b) {
-  st.data[0].push(tsSec); st.data[1].push(a); st.data[2].push(b);
-  if (st.data[0].length > MAX_POINTS) {
-    const cut = st.data[0].length - MAX_POINTS;
+// Appends without drawing. Ignores anything not newer than the last point: after
+// a resync, the samples the socket buffered while the page was paused arrive too.
+function appendPoint(st, tsSec, a, b) {
+  const t = st.data[0];
+  if (t.length && tsSec <= t[t.length - 1]) return false;
+  t.push(tsSec); st.data[1].push(a); st.data[2].push(b);
+  if (t.length > MAX_POINTS) {
+    const cut = t.length - MAX_POINTS;
     st.data = st.data.map((s) => s.slice(cut));
   }
+  return true;
+}
+
+function pushPoint(st, tsSec, a, b) {
+  if (!appendPoint(st, tsSec, a, b)) return;
   applyRange(st);
   renderConsumed();
 }
@@ -1110,11 +1119,31 @@ function newestSampleMs() {
   return newest || null;
 }
 
+// A paused page (closed menu-bar panel, background tab, sleep) holds data only as
+// fresh as the pause — the socket's samples sit buffered until it runs again. Ask
+// the server for what was missed rather than report our own pause as a dead poller.
+let resyncing = false;
+async function resync() {
+  const newest = newestSampleMs();
+  if (resyncing || !newest) return;      // no data yet: the socket's init brings it
+  resyncing = true;
+  try {
+    const r = await (await fetch(`/api/history?since=${Math.round(newest) + 1}`)).json();
+    for (const row of r.history || []) {
+      appendPoint(C, row.ts / 1000, row.fh, row.sd);
+      appendPoint(X, row.ts / 1000, row.cp, row.cs);
+    }
+    applyRangeAll();
+  } catch { /* server unreachable: then the stale bar is telling the truth */ }
+  resyncing = false;
+  checkStale();
+}
+
 function checkStale() {
   const el = $("stale");
   if (!el) return;
   const newest = newestSampleMs();
-  if (!newest) { el.hidden = true; return; }
+  if (!newest || resyncing) { el.hidden = true; return; }
   const poll = Number($("ivalNum") && $("ivalNum").value) || 60;
   const limit = Math.max(STALE_FLOOR_SEC, poll * STALE_MISSED_POLLS) * 1000;
   const age = Date.now() - newest;
@@ -1218,8 +1247,13 @@ function wireAccuracy() {
   });
 }
 
+const PAUSE_GAP_MS = 5000;   // a 1s ticker that skipped this long was paused
+let lastTick = Date.now();
+
 function tick() {
-  checkStale();
+  const now = Date.now(), paused = now - lastTick > PAUSE_GAP_MS;
+  lastTick = now;
+  if (paused) resync(); else checkStale();
   renderClaudeResets();
   renderClaudeForecast();
   document.querySelectorAll("#cxBars [data-reset]").forEach((el) => {
