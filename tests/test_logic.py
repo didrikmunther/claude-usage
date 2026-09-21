@@ -147,7 +147,8 @@ def _bare_hub():
     hub.claude_src = "desktop"
     hub.store = None
     hub.interval = 0
-    hub.latest = hub.codex_latest = None
+    hub.latest = hub.codex_latest = hub.claude2_latest = None
+    hub._track_cli = lambda: False    # not this machine's real ~/.claude.json
     hub.codex_available = hub.cc_available = hub.xcost_available = False
     hub.status = {"state": "starting", "message": None, "ts": None}
     hub.clients = set()
@@ -307,3 +308,133 @@ def test_previous_version_reads_where_the_updater_moved_from():
     assert previous_version("/x", git=fake) == "0.13.2"
     # a fresh clone never checked out a tag, so there is nothing to diff against
     assert previous_version("/x", git=lambda repo, *a: "commit: initial\n") is None
+
+
+# ---- terminal account: the status-line snapshot ----
+import claude_cli  # noqa: E402
+
+H5, D7 = 1_000_000, 2_000_000   # resets_at, epoch seconds
+
+
+def test_merge_keeps_the_newer_reading_per_window():
+    old = {"five_hour": [40.0, H5], "seven_day": [20.0, D7]}
+    # an idle session's older reading (same window, lower %) is refused
+    out, took = claude_cli.merge_windows(old, {"five_hour": [30.0, H5]})
+    assert out == old and not took
+    # same window, higher %, reset wobbling by a second: taken
+    out, took = claude_cli.merge_windows(old, {"five_hour": [45.0, H5 + 1]})
+    assert out["five_hour"] == [45.0, H5 + 1] and took
+    # a later window wins even though its % is lower
+    out, took = claude_cli.merge_windows(old, {"five_hour": [2.0, H5 + 5 * 3600]})
+    assert out["five_hour"] == [2.0, H5 + 5 * 3600] and out["seven_day"] == [20.0, D7]
+
+
+def test_snapshot_write_only_advances_on_accepted_readings():
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "s.json")
+        claude_cli.write_snapshot({"five_hour": [40.0, H5]}, 100, path=p)
+        claude_cli.write_snapshot({"five_hour": [30.0, H5]}, 200, path=p)   # stale: ignored
+        assert claude_cli.read_snapshot(p) == {"ts": 100, "windows": {"five_hour": [40.0, H5]}}
+        claude_cli.write_snapshot({"five_hour": [10.0, H5]}, 300, force=True, path=p)
+        assert claude_cli.read_snapshot(p)["windows"]["five_hour"] == [10.0, H5]
+
+
+def test_snapshot_usage_zeroes_windows_that_reset_since():
+    snap = {"ts": 1, "windows": {"five_hour": [40.0, H5], "seven_day": [20.0, D7]}}
+    row, live = normalize(claude_cli.snapshot_usage(snap, now_s=H5 + 10), ts=7)
+    assert row["fh"] == 0.0 and row["sd"] == 20.0
+    assert live["resets"]["five_hour"] is None
+    assert datetime.datetime.fromisoformat(live["resets"]["seven_day"]).timestamp() == D7
+
+
+def test_endpoint_and_statusline_readings_agree():
+    assert claude_cli.windows_from_usage(FIXTURE)["five_hour"][0] == 35.0
+    sl = {"rate_limits": {"five_hour": {"used_percentage": 12, "resets_at": H5}}}
+    assert claude_cli.windows_from_statusline(sl) == {"five_hour": [12.0, H5]}
+    assert claude_cli.windows_from_statusline({}) == {}
+
+
+def test_statusline_hook_install_run_uninstall():
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with tempfile.TemporaryDirectory() as home:
+        os.makedirs(os.path.join(home, ".claude"))
+        settings = os.path.join(home, ".claude", "settings.json")
+        mine = {"type": "command", "command": "cat >/dev/null; echo mine", "padding": 0}
+        with open(settings, "w") as fh:
+            json.dump({"model": "x", "statusLine": mine}, fh)
+        env = {**os.environ, "HOME": home, "CLAUDE_CODE_ENTRYPOINT": "cli"}
+        hook = [sys.executable, os.path.join(root, "statusline.py")]
+
+        subprocess.run(hook + ["--install"], env=env, check=True)
+        subprocess.run(hook + ["--install"], env=env, check=True)     # idempotent
+        sl = json.load(open(settings))["statusLine"]
+        assert "statusline.py" in sl["command"] and sl["padding"] == 0
+
+        stdin = json.dumps({"rate_limits": {"five_hour": {"used_percentage": 12, "resets_at": H5}}})
+        out = subprocess.run(hook, env=env, input=stdin.encode(), stdout=subprocess.PIPE, check=True)
+        assert out.stdout == b"mine\n"                                # previous line still shows
+        snap = json.load(open(os.path.join(home, ".claude-usage", "cli-limits.json")))
+        assert snap["windows"] == {"five_hour": [12.0, H5]}
+
+        subprocess.run(hook + ["--uninstall"], env=env, check=True)
+        assert json.load(open(settings)) == {"model": "x", "statusLine": mine}
+
+
+def test_store_keeps_the_second_accounts_columns():
+    with tempfile.TemporaryDirectory() as d:
+        s = Store(os.path.join(d, "u.db"))
+        s.insert({"ts": 1, "fh": 10.0, "kh": 30.0, "kd": 4.0})
+        h = s.history()[0]
+        assert (h["fh"], h["kh"], h["kd"]) == (10.0, 30.0, 4.0)
+
+
+def test_fetch_cli_asks_the_endpoint_only_when_the_snapshot_is_old(monkeypatch):
+    import time as _t
+    hub = _bare_hub()
+    hub._cli_api_next = 0.0
+    now = _t.time()
+    snap = {"ts": now * 1000, "windows": {"five_hour": [40.0, now + 3600]}}
+    calls = []
+
+    def endpoint():
+        calls.append(1)
+        return FIXTURE
+    monkeypatch.setattr(claude_cli, "read_snapshot", lambda: snap)
+    monkeypatch.setattr(claude_cli, "statusline_hooked", lambda: True)
+    monkeypatch.setattr(claude_cli, "fetch_usage", endpoint)
+    monkeypatch.setattr(claude_cli, "write_snapshot", lambda *a, **k: None)
+
+    row, _ = hub._fetch_cli(1)                      # fresh: no request
+    assert row["fh"] == 40.0 and calls == []
+
+    snap["ts"] = (now - 2 * 3600) * 1000            # two hours old
+    row, _ = hub._fetch_cli(2)
+    assert row["fh"] == 35.0 and calls == [1]       # the endpoint, once...
+    hub._fetch_cli(3)
+    assert calls == [1]                             # ...then not again for a while
+
+    def limited():
+        raise claude_cli.RateLimited(60)
+    monkeypatch.setattr(claude_cli, "fetch_usage", limited)
+    hub._cli_api_next = 0.0
+    row, _ = hub._fetch_cli(4)                      # 429: the old snapshot, no error
+    assert row["fh"] == 40.0 and hub._cli_api_next > now + 1000
+
+
+def test_claude_account_switch_drives_the_menu_bar():
+    with tempfile.TemporaryDirectory() as d:
+        s = Store(os.path.join(d, "u.db"))
+        assert s.get_claude_account() == "desktop"
+        assert s.set_claude_account("bogus") == "desktop"
+        s.set_claude_account("cli")
+        assert Store(os.path.join(d, "u.db")).get_claude_account() == "cli"   # persisted
+
+    hub = _bare_hub()
+    hub.latest, hub.claude2_latest = {"fh": 10.0}, None
+    hub.claude_account = "cli"
+    assert not hub._shows_cli()          # nothing from the CLI yet: stay on desktop
+    hub.claude2_latest = {"fh": 50.0}
+    assert hub._shows_cli()
+    hub.claude_account = "desktop"
+    assert not hub._shows_cli()

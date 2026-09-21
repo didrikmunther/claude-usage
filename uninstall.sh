@@ -14,6 +14,10 @@ for L in com.claude-usage.server com.claude-usage.menubar \
   rm -f "$LA/$L.plist"
 done
 
+echo "→ restoring Claude Code's status line"
+PY="$DIR/.venv/bin/python"; [ -x "$PY" ] || PY=python3
+"$PY" "$DIR/statusline.py" --uninstall || true
+
 echo "→ removing venv"
 rm -rf "$DIR/.venv"
 

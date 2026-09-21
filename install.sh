@@ -52,6 +52,9 @@ curl -fsSL "https://cdn.jsdelivr.net/npm/uplot@$UPLOT_VER/dist/uPlot.iife.min.js
 curl -fsSL "https://cdn.jsdelivr.net/npm/uplot@$UPLOT_VER/dist/uPlot.min.css" \
   -o "$DIR/static/vendor/uPlot.min.css"
 
+echo "→ hooking Claude Code's status line (terminal usage without polling)"
+"$DIR/.venv/bin/python" "$DIR/statusline.py" --install || echo "  ! status line not hooked (continuing)"
+
 echo "→ writing LaunchAgent $PLIST"
 cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>

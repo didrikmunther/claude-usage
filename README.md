@@ -67,8 +67,15 @@ Claude/OpenAI APIs** the apps already talk to. The server binds `127.0.0.1` only
 - **Claude (fallback, CLI):** if the desktop app isn't installed, reads Claude
   Code's OAuth token from the `Claude Code-credentials` Keychain item (or
   `~/.claude/.credentials.json`) and calls `GET https://api.anthropic.com/api/oauth/usage`
-  — no cookies, no org id. That endpoint is burst-limited, so Claude is polled
-  more gently (≈90s, with automatic back-off on 429).
+  — no cookies, no org id. That endpoint is burst-limited, so it is only a
+  fallback: the installer hooks Claude Code's status line (`statusline.py`),
+  which saves the 5-hour / 7-day usage Claude Code already receives to
+  `~/.claude-usage/cli-limits.json` — no extra requests. Your previous status
+  line keeps running through it (`settings.json.claude-usage.bak` is a backup;
+  `uninstall.sh` puts it back).
+- **Desktop and CLI:** when both are signed in, both are tracked, and a
+  Desktop | CLI switch next to "Claude" picks which one the dashboard shows —
+  useful when they are different accounts.
 - **Codex:** reads the Bearer token from `~/.codex/auth.json` and calls
   `GET https://chatgpt.com/backend-api/codex/usage` (quota-free), falling back
   to the on-disk session rollout logs if the token is stale.

@@ -33,6 +33,9 @@ if [ -n "$(git rev-list HEAD --not --remotes 2>/dev/null)" ]; then
 fi
 git -c advice.detachedHead=false checkout "tags/$TAG" || { echo "! checkout $TAG failed"; exit 1; }
 
+# Idempotent: hooks installs that predate the status-line hook.
+"$DIR/.venv/bin/python" "$DIR/statusline.py" --install || echo "! status line not hooked (continuing)"
+
 after="$(shasum requirements.txt 2>/dev/null | awk '{print $1}')"
 if [ "$before" != "$after" ]; then
   echo "requirements.txt changed — updating deps"

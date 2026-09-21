@@ -171,7 +171,7 @@ function render() {
 }
 
 // ---- websocket (same feed as the dashboard) ----
-let ws = null, backoff = 500;
+let ws = null, backoff = 500, cli = false;
 
 function connect() {
   ws = new WebSocket(WS_URL);
@@ -185,12 +185,15 @@ function connect() {
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === "init") {
+      // The dashboard's Desktop | CLI switch picks which Claude this shows.
+      cli = m.claude_account === "cli" && !!m.claude2;
       C.data = [[], [], []]; X.data = [[], [], []];
       for (const r of m.history || []) {
-        push(C, r.ts / 1000, r.fh, r.sd);
+        push(C, r.ts / 1000, cli ? r.kh : r.fh, cli ? r.kd : r.sd);
         push(X, r.ts / 1000, r.cp, r.cs);
       }
-      if (m.claude) { C.last = m.claude; if (m.claude.resets) C.resets = m.claude.resets; }
+      const c = cli ? m.claude2 : m.claude;
+      if (c) { C.last = c; if (c.resets) C.resets = c.resets; }
       if (m.codex) X.last = m.codex;
       if (m.forecast_model) forecastModel = m.forecast_model;
       if (m.working_days != null) workingDays = String(m.working_days).split(",").filter(Boolean).map(Number);
@@ -200,11 +203,14 @@ function connect() {
       if (m.working_days != null) workingDays = String(m.working_days).split(",").filter(Boolean).map(Number);
       projCache.clear();
       render();
+    } else if (m.type === "claude_account") {
+      ws.close();                  // reconnect: "init" rebuilds with the other account
     } else if (m.type === "sample") {
-      if (m.claude) {
-        push(C, m.claude.ts / 1000, m.claude.fh, m.claude.sd);
-        C.last = m.claude;
-        if (m.claude.resets) C.resets = m.claude.resets;
+      const c = cli ? m.claude2 : m.claude;
+      if (c) {
+        push(C, c.ts / 1000, c.fh, c.sd);
+        C.last = c;
+        if (c.resets) C.resets = c.resets;
       }
       if (m.codex) { push(X, m.codex.ts / 1000, m.codex.cp, m.codex.cs); X.last = m.codex; }
       render();

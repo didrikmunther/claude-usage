@@ -28,19 +28,20 @@ class Store:
         )
         # Codex columns (added later): cp/cs = primary/secondary window %, cc = credits.
         have = {r[1] for r in self._db.execute("PRAGMA table_info(samples)")}
-        for col in ("cp", "cs", "cc"):
+        # kh/kd = the CLI's 5-hour / 7-day %, tracked next to the desktop app's.
+        for col in ("cp", "cs", "cc", "kh", "kd"):
             if col not in have:
                 self._db.execute(f"ALTER TABLE samples ADD COLUMN {col} REAL")
         self._db.commit()
 
-    COLS = ("ts", "fh", "sd", "so", "sn", "credits", "cp", "cs", "cc")
+    COLS = ("ts", "fh", "sd", "so", "sn", "credits", "cp", "cs", "cc", "kh", "kd")
 
     def insert(self, row: dict) -> None:
         vals = {c: row.get(c) for c in self.COLS}
         with self._lock:
             self._db.execute(
-                "INSERT OR REPLACE INTO samples (ts, fh, sd, so, sn, credits, cp, cs, cc) "
-                "VALUES (:ts, :fh, :sd, :so, :sn, :credits, :cp, :cs, :cc)", vals,
+                f"INSERT OR REPLACE INTO samples ({', '.join(self.COLS)}) "
+                f"VALUES ({', '.join(':' + c for c in self.COLS)})", vals,
             )
             self._db.commit()
 
@@ -77,6 +78,26 @@ class Store:
                 (model,))
             self._db.commit()
         return model
+
+    # Which Claude the dashboard, widget and menu bar show when the desktop app
+    # and the CLI are both tracked. Server-side so the menu bar can follow it.
+    CLAUDE_ACCOUNTS = ("desktop", "cli")
+
+    def get_claude_account(self) -> str:
+        with self._lock:
+            r = self._db.execute(
+                "SELECT value FROM config WHERE key='claude_account'").fetchone()
+        return r[0] if r and r[0] in self.CLAUDE_ACCOUNTS else "desktop"
+
+    def set_claude_account(self, acct: str) -> str:
+        if acct not in self.CLAUDE_ACCOUNTS:
+            return self.get_claude_account()
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO config (key, value) VALUES ('claude_account', ?)",
+                (acct,))
+            self._db.commit()
+        return acct
 
     # Local weekday numbers you work on (0 = Sunday). All seven = no effect.
     # Server-side for the same reason the forecast model is: the floating pill

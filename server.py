@@ -35,6 +35,8 @@ FETCH_TIMEOUT = 45      # hard cap on a single poll; guards against wake-from-sl
 CLAUDE_MIN_INTERVAL = 300  # The CLI's oauth/usage endpoint is tightly (hourly)
                            # rate-limited and shared with Claude Code's own /usage
                            # calls, so poll it gently — the % meter barely moves.
+CLI_REFRESH = 1800   # with the status-line hook the snapshot is fresh whenever the
+                     # terminal is in use; the endpoint only catches use elsewhere
 UPDATE_CHECK_INTERVAL = 6 * 3600   # how often to look for a new release
 
 app = FastAPI(title="Claude Usage")
@@ -75,9 +77,11 @@ class Hub:
         self.store: Store | None = None
         self.interval: int = 60
         self.forecast_model: str = DEFAULT_FORECAST_MODEL
+        self.claude_account: str = "desktop"
         self.working_days: str = DEFAULT_WORKING_DAYS
         self.changelog_seen: str | None = None
         self.latest: dict | None = None
+        self.claude2_latest: dict | None = None   # the CLI's, next to the desktop app
         self.codex_latest: dict | None = None
         self.codex_available: bool = False
         self.cc_latest: dict | None = None
@@ -93,6 +97,7 @@ class Hub:
         # would otherwise keep us hammering the limited endpoint every interval).
         self._claude_next = 0.0
         self._claude_streak = 0
+        self._cli_api_next = 0.0   # when the CLI endpoint may be asked again
         self.update_info: dict = {"current": updater.current_version(),
                                   "latest": None, "update_available": False}
         self._update_next = 0.0
@@ -109,6 +114,7 @@ class Hub:
         self.store = Store(DB_PATH)
         self.interval = self.store.get_interval()
         self.forecast_model = self.store.get_forecast_model()
+        self.claude_account = self.store.get_claude_account()
         self.working_days = self.store.get_working_days()
         # Seed "last changelog shown" on the first changelog-aware start: the
         # version this install ran before its latest update, else the current one
@@ -165,6 +171,14 @@ class Hub:
         self.forecast_model = self.store.set_forecast_model(model)
         return self.forecast_model
 
+    def set_claude_account(self, acct: str) -> str:
+        self.claude_account = self.store.set_claude_account(acct)
+        return self.claude_account
+
+    def _shows_cli(self) -> bool:
+        """The Desktop | CLI switch is on CLI, and there is CLI data to show."""
+        return self.claude_account == "cli" and self.claude2_latest is not None
+
     def set_interval(self, seconds: int) -> int:
         self.interval = self.store.set_interval(seconds)
         self._wake.set()          # apply immediately
@@ -179,7 +193,8 @@ class Hub:
         if not self.store:
             return {"claude_rate": 0.0, "codex_rate": 0.0, "claude_frac": 0.0, "codex_frac": 0.0}
         hist = self.store.history(since_ms=poller.now_ms() - 4 * 3600 * 1000)  # ≥ longest lookback
-        cr = burn_rate(hist, "fh", lookback_ms=5 * 60 * 1000)     # Claude: 5-hour on a 0–100 dial
+        ck = "kh" if self._shows_cli() else "fh"                  # the switched-to Claude
+        cr = burn_rate(hist, ck, lookback_ms=5 * 60 * 1000)       # Claude: 5-hour on a 0–100 dial
         cf = min(1.0, cr / 100.0)                                 # needle pegs at 100 %/h
         xr = burn_rate(hist, "cs", lookback_ms=168 * 60 * 1000)   # Codex: 7-day on a 0–8 dial
         xf = min(1.0, xr / 8.0)                                   # needle pegs at 8 %/h
@@ -225,17 +240,44 @@ class Hub:
 
     def _fetch_claude(self, ts):
         if self.claude_src == "cli":
-            raw = claude_cli.fetch_usage()
-        else:
-            try:
-                raw = poller.fetch_usage(self.key, self.org)
-            except Exception as e:
-                if "404" not in str(e):           # org not found → likely stale after
-                    raise                         # an account/org switch; recover once
-                self._recover_claude_404()
-                raw = (claude_cli.fetch_usage() if self.claude_src == "cli"
-                       else poller.fetch_usage(self.key, self.org))
+            return self._fetch_cli(ts)
+        try:
+            raw = poller.fetch_usage(self.key, self.org)
+        except Exception as e:
+            if "404" not in str(e):           # org not found → likely stale after
+                raise                         # an account/org switch; recover once
+            self._recover_claude_404()
+            if self.claude_src == "cli":
+                return self._fetch_cli(ts)
+            raw = poller.fetch_usage(self.key, self.org)
         return poller.normalize(raw, ts)          # (row, live)
+
+    def _fetch_cli(self, ts):
+        """The terminal account's usage: the status-line snapshot while it's
+        fresh, the rate-limited endpoint only when it isn't. None = nothing yet."""
+        now = time.time()
+        snap = claude_cli.read_snapshot()
+        max_age = CLI_REFRESH if claude_cli.statusline_hooked() else CLAUDE_MIN_INTERVAL
+        if (not snap or now - snap["ts"] / 1000 > max_age) and now >= self._cli_api_next:
+            self._cli_api_next = now + max_age
+            try:
+                raw = claude_cli.fetch_usage()
+            except claude_cli.RateLimited as e:
+                self._cli_api_next = now + max(e.retry_after, max_age)
+                if not snap:
+                    raise
+                print(f"[claude] CLI endpoint {e}; showing the last snapshot")
+            else:
+                claude_cli.write_snapshot(claude_cli.windows_from_usage(raw), ts, force=True)
+                return poller.normalize(raw, ts)
+        if not snap:
+            return None
+        return poller.normalize(claude_cli.snapshot_usage(snap, now), ts)
+
+    def _track_cli(self) -> bool:
+        """The CLI is signed in next to the desktop app → track it too, for the
+        dashboard's Desktop | CLI switch (another account, or the same one)."""
+        return self.claude_src == "desktop" and bool(claude_cli.account_org())
 
     def _recover_claude_404(self):
         """Desktop 404 = the org in the URL isn't accessible — almost always a
@@ -271,19 +313,18 @@ class Hub:
         loop = asyncio.get_running_loop()
         ts = poller.now_ms()
         row = {"ts": ts}
-        claude_live = codex_live = None
+        claude_live = codex_live = claude2_live = None
         errs = []
 
         if self.claude_src and time.time() >= self._claude_next:
             try:
-                crow, claude_live = await asyncio.wait_for(
+                res = await asyncio.wait_for(
                     loop.run_in_executor(self._pool, self._fetch_claude, ts),
                     timeout=FETCH_TIMEOUT)
-                row.update(crow)
+                if res:
+                    crow, claude_live = res
+                    row.update(crow)
                 self._claude_streak = 0
-                # Desktop tolerates the UI interval; only throttle the CLI source.
-                self._claude_next = time.time() + (
-                    CLAUDE_MIN_INTERVAL if self.claude_src == "cli" else 0.0)
             except claude_cli.RateLimited as e:
                 errs.append(self._cooldown_claude(e.retry_after))
             except Exception as e:
@@ -291,6 +332,17 @@ class Hub:
                     errs.append(self._cooldown_claude(0))
                 else:
                     errs.append(self._errmsg("Claude", e))
+
+        if self._track_cli():
+            try:
+                res = await asyncio.wait_for(
+                    loop.run_in_executor(self._pool, self._fetch_cli, ts),
+                    timeout=FETCH_TIMEOUT)
+                if res:
+                    krow, claude2_live = res
+                    row.update(kh=krow["fh"], kd=krow["sd"])
+            except Exception as e:
+                errs.append(self._errmsg("Claude (terminal)", e))
 
         if self.codex_available:
             try:
@@ -303,7 +355,7 @@ class Hub:
 
         row["ts"] = ts                            # single timestamp for the combined row
         stored = False
-        if claude_live or codex_live:
+        if claude_live or codex_live or claude2_live:
             try:
                 self.store.insert(row)
                 stored = True
@@ -318,9 +370,12 @@ class Hub:
                 self.latest = claude_live
             if codex_live:
                 self.codex_latest = codex_live
+            if claude2_live:
+                self.claude2_latest = claude2_live
             self._fail_streak = 0
             self.status = {"state": "ok", "message": "; ".join(errs) or None, "ts": ts}
             await self.broadcast({"type": "sample", "claude": claude_live,
+                                  "claude2": claude2_live,
                                   "codex": codex_live, "status": self.status})
         else:
             self._fail_streak += 1
@@ -385,7 +440,10 @@ async def widget():
 
 @app.get("/api/latest")
 async def api_latest():
-    return JSONResponse({"latest": hub.latest, "claude": hub.latest,
+    # "latest" is what the menu bar shows: whichever Claude the switch is on.
+    return JSONResponse({"latest": hub.claude2_latest if hub._shows_cli() else hub.latest,
+                         "claude": hub.latest,
+                         "claude2": hub.claude2_latest,
                          "codex": hub.codex_latest,
                          "codex_available": hub.codex_available,
                          "cc": hub.cc_latest, "cc_available": hub.cc_available,
@@ -393,6 +451,7 @@ async def api_latest():
                          "update": hub.update_info, **hub.rates(),
                          "status": hub.status, "interval": hub.interval,
                          "forecast_model": hub.forecast_model,
+                         "claude_account": hub.claude_account,
                          "working_days": hub.working_days})
 
 
@@ -438,6 +497,7 @@ async def ws(sock: WebSocket):
         "type": "init",
         "history": hub.store.history(),
         "claude": hub.latest,
+        "claude2": hub.claude2_latest,
         "codex": hub.codex_latest,
         "codex_available": hub.codex_available,
         "cc": hub.cc_latest,
@@ -450,6 +510,7 @@ async def ws(sock: WebSocket):
         "status": hub.status,
         "interval": hub.interval,
         "forecast_model": hub.forecast_model,
+        "claude_account": hub.claude_account,
         "working_days": hub.working_days,
         "limits": {"min": MIN_INTERVAL, "max": MAX_INTERVAL},
     })
@@ -462,6 +523,9 @@ async def ws(sock: WebSocket):
             elif "set_forecast_model" in msg:
                 m = hub.set_forecast_model(msg["set_forecast_model"])
                 await hub.broadcast({"type": "forecast_model", "forecast_model": m})
+            elif "set_claude_account" in msg:
+                a = hub.set_claude_account(msg["set_claude_account"])
+                await hub.broadcast({"type": "claude_account", "claude_account": a})
             elif "set_working_days" in msg:
                 d = hub.set_working_days(msg["set_working_days"])
                 await hub.broadcast({"type": "working_days", "working_days": d})

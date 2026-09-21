@@ -3,7 +3,11 @@
 // ---- state ----
 // Two independent chart panels: C = Claude, X = Codex. Each holds its full
 // series buffer [ [ts(sec)], [a], [b] ] plus the latest live payload.
-const C = { chart: null, data: [[], [], []], resets: {}, last: null };
+// C = the desktop app's Claude (or the CLI's when there is no app); K = the CLI's
+// when it is signed in too. Same card, ids prefixed by `p`.
+const C = { key: "c", p: "", chart: null, data: [[], [], []], resets: {}, last: null };
+const K = { key: "k", p: "k_", chart: null, data: [[], [], []], resets: {}, last: null, shown: false };
+const CLAUDES = [C, K];
 const X = { chart: null, data: [[], [], []], last: null, shown: false };
 
 let bounds = { min: 10, max: 3600 };
@@ -210,9 +214,9 @@ function resetOverride(iso, winSec) {
 }
 // Per-panel {a, b} reset overrides for the two charted series (a = 5-hour, b = 7-day).
 function panelResets(st) {
-  if (st === C) return {
-    a: resetOverride(C.resets.five_hour, 5 * 3600),
-    b: resetOverride(C.resets.seven_day, 7 * 86400),
+  if (CLAUDES.includes(st)) return {
+    a: resetOverride(st.resets.five_hour, 5 * 3600),
+    b: resetOverride(st.resets.seven_day, 7 * 86400),
   };
   if (st === X) {
     const wins = (X.last && X.last.windows) || [];
@@ -292,7 +296,7 @@ function withProjection(tsFull, aFull, bFull, rst, rangeSecs) {
     mkRow(loA), mkRow(loB),
     mkRow(hiA), mkRow(hiB)];
 }
-function applyRangeAll() { applyRange(C); applyRange(X); renderConsumed(); }
+function applyRangeAll() { applyRange(C); applyRange(K); applyRange(X); renderConsumed(); }
 
 // Percentage units consumed within the visible range = sum of positive
 // step-to-step increments per series (resets/decreases don't count).
@@ -324,6 +328,7 @@ function renderConsumed() {
   const targets = [
     // {i} indexes into consumedInRange's [series1, series2]. Codex omits 5-hour.
     { st: C, el: "consumed", series: [{ i: 0, lbl: "5h", col: "--fh" }, { i: 1, lbl: "7d", col: "--sd" }] },
+    { st: K, el: "k_consumed", series: [{ i: 0, lbl: "5h", col: "--fh" }, { i: 1, lbl: "7d", col: "--sd" }] },
     { st: X, el: "cxConsumed", series: [{ i: 1, lbl: "7d", col: "--cx2" }] },
   ];
   for (const t of targets) {
@@ -358,9 +363,10 @@ function pushPoint(st, tsSec, a, b) {
 }
 
 function loadHistory(rows) {
-  C.data = [[], [], []]; X.data = [[], [], []];
+  C.data = [[], [], []]; K.data = [[], [], []]; X.data = [[], [], []];
   for (const r of rows) {
     C.data[0].push(r.ts / 1000); C.data[1].push(r.fh); C.data[2].push(r.sd);
+    K.data[0].push(r.ts / 1000); K.data[1].push(r.kh); K.data[2].push(r.kd);
     X.data[0].push(r.ts / 1000); X.data[1].push(r.cp); X.data[2].push(r.cs);
   }
   // Deliberately does NOT draw. The caller renders the live payloads first,
@@ -404,20 +410,47 @@ function progRow(label, p) {
 const emptyRow = () => `<div class="prog-row muted"><span class="prog-msg">gathering data…</span></div>`;
 
 // ---- Claude rendering ----
-function renderClaude(s) {
-  C.last = s;
-  if (s.resets) C.resets = s.resets;
-  $("fhFill").style.width = (s.fh ?? 0) + "%";
-  $("sdFill").style.width = (s.sd ?? 0) + "%";
-  $("fhPct").textContent = fmtPct(s.fh);
-  $("sdPct").textContent = fmtPct(s.sd);
-  renderScoped(s.limits);
-  renderClaudeResets();
-  renderClaudeForecast();
+function renderClaude(st, s) {
+  st.last = s;
+  if (s.resets) st.resets = s.resets;
+  if (st === K) showClaude2();
+  $(st.p + "fhFill").style.width = (s.fh ?? 0) + "%";
+  $(st.p + "sdFill").style.width = (s.sd ?? 0) + "%";
+  $(st.p + "fhPct").textContent = fmtPct(s.fh);
+  $(st.p + "sdPct").textContent = fmtPct(s.sd);
+  renderScoped(st, s.limits);
+  renderClaudeResets(st);
+  renderClaudeForecast(st);
 }
 
-function renderScoped(limits) {
-  const box = $("scoped");
+// Desktop and CLI both signed in: one column at a time, picked by the Desktop | CLI switch
+// beside the name (the copy in each column's head drives the same choice).
+let acct = "desktop";   // the server's; arrives on "init" and "claude_account"
+function showClaude2() {
+  if (K.shown) return;
+  K.shown = true;
+  document.querySelectorAll('.seg[data-sync="acct"]').forEach((g) => { g.hidden = false; });
+  paintAcct();
+}
+
+function paintAcct() {
+  const cli = K.shown && acct === "cli";
+  $("colClaude").hidden = cli;
+  $("k_colClaude").hidden = !cli;
+  document.querySelectorAll('.seg[data-sync="acct"] button').forEach((b) =>
+    b.classList.toggle("on", b.dataset.a === acct));
+}
+
+function wireAcct() {
+  document.querySelectorAll('.seg[data-sync="acct"] button').forEach((b) =>
+    b.addEventListener("click", () => {
+      // Kept server-side, so the menu bar and widget switch too.
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ set_claude_account: b.dataset.a }));
+    }));
+}
+
+function renderScoped(st, limits) {
+  const box = $(st.p + "scoped");
   const scoped = (limits || []).filter((l) => l.scope && l.scope.model);
   box.innerHTML = scoped.map((l) => {
     const name = l.scope.model.display_name || "model";
@@ -425,9 +458,9 @@ function renderScoped(limits) {
   }).join("");
 }
 
-function renderClaudeResets() {
-  $("fhReset").textContent = countdown(C.resets.five_hour);
-  $("sdReset").textContent = countdown(C.resets.seven_day);
+function renderClaudeResets(st) {
+  $(st.p + "fhReset").textContent = countdown(st.resets.five_hour);
+  $(st.p + "sdReset").textContent = countdown(st.resets.seven_day);
 }
 
 // The text rows read the SAME trajectory the chart draws, so a sentence and the
@@ -441,7 +474,7 @@ function windowProjection(st, col, resetIso, reset) {
   const now = ts[ts.length - 1];
   const horizon = new Date(resetIso).getTime() / 1000 - now;
   if (!(horizon > 0)) return null;
-  const key = `${st === C ? "c" : "x"}|${col}|${forecastModel}|${now}|${resetIso}`;
+  const key = `${st.key || "x"}|${col}|${forecastModel}|${now}|${resetIso}`;
   if (projCache.has(key)) return projCache.get(key);
   const P = Predictors[forecastModel] || Predictors.linear;
   let pts = null;
@@ -460,22 +493,22 @@ function colReset(st, col) {
   return col === 1 ? r.a : col === 2 ? r.b : null;
 }
 
-function renderClaudeForecast() {
-  if (!C.last) return;
+function renderClaudeForecast(st) {
+  if (!st.last) return;
   const rows = [];
   for (const w of CLAUDE_WIN) {
-    const cur = C.last[w.key];
+    const cur = st.last[w.key];
     if (cur == null) continue;
-    const resetIso = C.resets[w.reset];
+    const resetIso = st.resets[w.reset];
     const samples = (w.series && resetIso)
-      ? cycleSamples(C.data, w.series, new Date(resetIso).getTime(), w.winMs) : null;
+      ? cycleSamples(st.data, w.series, new Date(resetIso).getTime(), w.winMs) : null;
     // Windows the chart doesn't plot (Opus, Sonnet) keep the straight-line pace.
-    const proj = windowProjection(C, w.col, resetIso, colReset(C, w.col));
+    const proj = windowProjection(st, w.col, resetIso, colReset(st, w.col));
     const p = (proj && forecastFromPoints(cur, w.winMs, resetIso, proj))
       || forecast(cur, w.winMs, resetIso, samples);
     rows.push(progRow(w.label, p));
   }
-  $("prog").innerHTML = rows.join("") || emptyRow();
+  $(st.p + "prog").innerHTML = rows.join("") || emptyRow();
 }
 
 // ---- Codex rendering ----
@@ -560,7 +593,7 @@ function renderCodexForecast() {
 
 // ---- status ----
 function setDots(cls) {                        // one status dot per column
-  for (const id of ["dot", "cxDot"]) {
+  for (const id of ["dot", "k_dot", "cxDot"]) {
     const d = $(id);
     if (d) d.className = cls ? `dot ${cls}` : "dot";
   }
@@ -921,7 +954,8 @@ function connect() {
       if (m.limits) bounds = m.limits;
       $("ival").min = bounds.min; $("ivalNum").min = bounds.min; $("ivalNum").max = bounds.max;
       loadHistory(m.history || []);
-      if (m.claude) renderClaude(m.claude);
+      if (m.claude) renderClaude(C, m.claude);
+      if (m.claude2) renderClaude(K, m.claude2);
       if (m.codex) renderCodex(m.codex);
       applyRangeAll();                      // now that resets are known
       if (m.cc) renderCC(m.cc);
@@ -929,6 +963,7 @@ function connect() {
       if (m.update) renderUpdate(m.update);
       setIntervalUI(m.interval);
       if (m.forecast_model) setForecastModel(m.forecast_model);
+      if (m.claude_account) { acct = m.claude_account; paintAcct(); }
       if (m.working_days != null) setWorkingDays(m.working_days);
       if (m.changelog && m.changelog.length) {
         renderChangelog(m.changelog, "update",
@@ -939,7 +974,8 @@ function connect() {
       scoreForecasts();
       if (!revvedOnce) { revvedOnce = true; window.revGauges(); }
     } else if (m.type === "sample") {
-      if (m.claude) { pushPoint(C, m.claude.ts / 1000, m.claude.fh, m.claude.sd); renderClaude(m.claude); }
+      if (m.claude) { pushPoint(C, m.claude.ts / 1000, m.claude.fh, m.claude.sd); renderClaude(C, m.claude); }
+      if (m.claude2) { pushPoint(K, m.claude2.ts / 1000, m.claude2.fh, m.claude2.sd); renderClaude(K, m.claude2); }
       if (m.codex) { pushPoint(X, m.codex.ts / 1000, m.codex.cp, m.codex.cs); renderCodex(m.codex); }
       setStatus(m.status);
     } else if (m.type === "cc") {
@@ -957,6 +993,8 @@ function connect() {
       }
     } else if (m.type === "working_days") {
       setWorkingDays(m.working_days);
+    } else if (m.type === "claude_account") {
+      acct = m.claude_account; paintAcct();
     } else if (m.type === "forecast_model") {
       setForecastModel(m.forecast_model);
     } else if (m.type === "interval") {
@@ -968,7 +1006,7 @@ function connect() {
 // ---- 1-second tick: keep countdowns + forecasts fresh ----
 // ---- burn-rate gauges (speedometer of last-5-min %/h) ----
 const GAUGE_MAX = 60;   // %/h full-scale
-let claudeGauge = null, codexGauge = null, revvedOnce = false;
+let claudeGauge = null, claude2Gauge = null, codexGauge = null, revvedOnce = false;
 
 function makeGauge(elId, zoneStops) {
   const el = $(elId);
@@ -1064,7 +1102,7 @@ function makeGauge(elId, zoneStops) {
 }
 
 // Rev both gauges — called on page load and by the menu bar on each popover open.
-window.revGauges = () => { if (claudeGauge) claudeGauge.rev(); if (codexGauge) codexGauge.rev(); };
+window.revGauges = () => { for (const g of [claudeGauge, claude2Gauge, codexGauge]) if (g) g.rev(); };
 
 // Which window the gauge shows: the SHORTEST window that's actively burning
 // (so an active 5-hour beats a slow 7-day trend while you're coding); if none is
@@ -1093,9 +1131,10 @@ const WIN_CODEX = [{ idx: 2, hours: 168 }];   // Codex: 7-day only (no real 5-ho
 
 function updateGauges() {
   const now = Date.now() / 1000;
-  if (claudeGauge) {
-    const r = burnRate(C.data[0], C.data[1], now, 5 * 60);   // 5-hour rate
-    claudeGauge.update(r, CLAUDE_MAX, 5);
+  for (const [g, st] of [[claudeGauge, C], [claude2Gauge, K]]) {
+    if (!g) continue;
+    const r = burnRate(st.data[0], st.data[1], now, 5 * 60);   // 5-hour rate
+    g.update(r, CLAUDE_MAX, 5);
   }
   if (codexGauge) {
     const b = bindingBurn(X.data, now, WIN_CODEX);           // 7-day rate + lookback
@@ -1112,7 +1151,7 @@ const STALE_FLOOR_SEC = 300;    // ...but never warn about less than 5 minutes
 
 function newestSampleMs() {
   let newest = 0;
-  for (const st of [C, X]) {
+  for (const st of [C, K, X]) {
     const ts = st.data && st.data[0];
     if (ts && ts.length) newest = Math.max(newest, ts[ts.length - 1] * 1000);
   }
@@ -1131,6 +1170,7 @@ async function resync() {
     const r = await (await fetch(`/api/history?since=${Math.round(newest) + 1}`)).json();
     for (const row of r.history || []) {
       appendPoint(C, row.ts / 1000, row.fh, row.sd);
+      appendPoint(K, row.ts / 1000, row.kh, row.kd);
       appendPoint(X, row.ts / 1000, row.cp, row.cs);
     }
     applyRangeAll();
@@ -1254,8 +1294,7 @@ function tick() {
   const now = Date.now(), paused = now - lastTick > PAUSE_GAP_MS;
   lastTick = now;
   if (paused) resync(); else checkStale();
-  renderClaudeResets();
-  renderClaudeForecast();
+  for (const st of CLAUDES) { renderClaudeResets(st); renderClaudeForecast(st); }
   document.querySelectorAll("#cxBars [data-reset]").forEach((el) => {
     el.textContent = countdown(el.dataset.reset);
   });
@@ -1276,7 +1315,21 @@ function observeSize(elId, getChart) {
   ro.observe(el);
 }
 
+// The second account's column is a copy of the first, made before anything is
+// wired so the range and model buttons inside it get wired too.
+function cloneClaudeColumn() {
+  const col = $("colClaude").cloneNode(true);
+  col.querySelectorAll("[id]").forEach((el) => { el.id = K.p + el.id; });
+  col.id = K.p + "colClaude";
+  col.hidden = true;
+  $("colClaude").after(col);
+}
+
 window.addEventListener("load", () => {
+  cloneClaudeColumn();
+  K.chart = makeChart("k_chart", [{ label: "5h", color: "--fh" }, { label: "7d", color: "--sd" }],
+    [nowDivider()]);
+  observeSize("k_chart", () => K.chart);
   C.chart = makeChart("chart", [{ label: "5h", color: "--fh" }, { label: "7d", color: "--sd" }],
     [nowDivider()]);
   // Codex has no real 5-hour limit (its 5-hour "Spark" window is feature-specific
@@ -1286,6 +1339,7 @@ window.addEventListener("load", () => {
   observeSize("chart", () => C.chart);
   observeSize("cxChart", () => X.chart);
   wireControls();
+  wireAcct();
   wireRange();
   wireForecastModel();
   wireAccuracy();
@@ -1296,6 +1350,7 @@ window.addEventListener("load", () => {
   wireUpdate();
   wireCheckUpdate();
   claudeGauge = makeGauge("claudeGauge", [0.3, 0.6]);   // 0–100 %/h dial, red from 60
+  claude2Gauge = makeGauge("k_claudeGauge", [0.3, 0.6]);
   codexGauge = makeGauge("codexGauge");                  // window-relative, red from 2× sustainable
   connect();   // rev fires from the first WS "init", once the live rate is known
   setInterval(tick, 1000);
