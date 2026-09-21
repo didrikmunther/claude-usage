@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.16.0] - 2026-09-21
 - Use Claude in both the desktop app and the terminal? A Desktop | CLI toggle next to "Claude" switches between them, in the menu bar too — handy when they're signed in to different accounts.
 - Claude usage from the terminal updates as you work instead of every few minutes, and runs into "rate limit" pauses far less often. Your existing Claude Code status line keeps working as before.
 
