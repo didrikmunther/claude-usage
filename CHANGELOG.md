@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.16.1] - 2026-09-23
 - "Update" used to get stuck saying the app would restart in a moment, forever, whenever the update couldn't be applied. It now tells you what stopped it — and if the app doesn't come back up after installing, it says that too instead of leaving you waiting.
 
 ## [0.16.0] - 2026-09-21
