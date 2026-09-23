@@ -892,7 +892,7 @@ function wireCheckUpdate() {
     if (updateReady()) {                                  // apply the update
       btn.dataset.busy = "1"; btn.disabled = true;
       btn.textContent = "Updating…";
-      try { await fetch("/api/update", { method: "POST" }); } catch (e) { /* server restarts */ }
+      applyUpdate();                                      // banner carries the outcome
       return;                                             // WS reconnect + renderUpdate reset it
     }
     btn.dataset.busy = "1"; btn.disabled = true;          // check for one
@@ -915,26 +915,48 @@ function wireCheckUpdate() {
   });
 }
 
-function wireUpdate() {
-  $("updateBtn").addEventListener("click", async () => {
-    const btn = $("updateBtn"), msg = $("updateMsg");
-    btn.disabled = true;
-    msg.textContent = "Updating… the app will restart in a moment.";
-    try {
-      const r = await fetch("/api/update", { method: "POST" });
-      if (!r.ok) {
-        // Nothing to apply (e.g. 400) — don't leave the label stuck.
-        const body = await r.json().catch(() => ({}));
-        msg.textContent = "Update didn't start: " + (body.error || ("HTTP " + r.status));
-        btn.disabled = false;
-        setTimeout(() => renderUpdate(lastUpdate), 3000);   // restore true state
-      }
-      // On success the server restarts; the WS reconnects and renderUpdate()
-      // clears this banner once versions match.
-    } catch (e) {
-      // Connection dropped — expected while the server restarts to apply.
+// Applying runs detached, out of process, and the only sign of success is the
+// server coming back — so a refusal (local edits in the checkout, no network,
+// an agent that won't restart) used to leave this banner saying "Updating…"
+// forever. update.sh records what it did; poll that and report it.
+const UPDATE_WAIT_MS = 4 * 60e3;   // longest plausible run: fetch + pip + restart
+async function applyUpdate() {
+  const btn = $("updateBtn"), msg = $("updateMsg");
+  const failed = (text) => {
+    $("updateBar").hidden = false;
+    msg.textContent = text;
+    btn.disabled = false;
+    const chk = $("checkUpdate");
+    if (chk) { chk.dataset.busy = "0"; chk.disabled = false; setCheckBtnLabel(); }
+  };
+  btn.disabled = true;
+  msg.textContent = "Updating… the app will restart in a moment.";
+  try {
+    const r = await fetch("/api/update", { method: "POST" });
+    if (!r.ok) {                       // nothing to apply (e.g. 400)
+      const body = await r.json().catch(() => ({}));
+      failed("Update didn't start: " + (body.error || "HTTP " + r.status));
+      setTimeout(() => renderUpdate(lastUpdate), 3000);    // restore true state
+      return;
     }
-  });
+  } catch (e) {
+    // Connection dropped — expected while the server restarts to apply.
+  }
+  const until = Date.now() + UPDATE_WAIT_MS;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 3000));
+    // The WS reconnected on the new version and cleared the banner: done.
+    if (!updateReady()) return;
+    let st = null;
+    try { st = await (await fetch("/api/update-status")).json(); }
+    catch (e) { continue; }            // server is down mid-restart: keep waiting
+    if (st.state === "fail") return failed("Update failed: " + st.message);
+  }
+  failed("Update didn't finish — see ~/.claude-usage/update.log");
+}
+
+function wireUpdate() {
+  $("updateBtn").addEventListener("click", applyUpdate);
 }
 
 function connect() {

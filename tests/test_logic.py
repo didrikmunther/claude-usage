@@ -105,6 +105,21 @@ def test_pick_latest():
     assert pick_latest([]) is None
 
 
+def test_apply_status_reports_what_the_updater_wrote():
+    # The page waiting for a restart reads this; a refusal must reach it.
+    import updater
+    with tempfile.TemporaryDirectory() as d:
+        updater.STATUS_FILE = os.path.join(d, "update-status")
+        assert updater.apply_status() == {"state": "idle", "message": ""}   # never ran
+        with open(updater.STATUS_FILE, "w") as fh:
+            fh.write("fail\tthis copy has local edits\n")
+        assert updater.apply_status() == {"state": "fail",
+                                          "message": "this copy has local edits"}
+        with open(updater.STATUS_FILE, "w") as fh:
+            fh.write("ok\tv1.2.3\n")
+        assert updater.apply_status()["state"] == "ok"
+
+
 def test_burn_rate():
     from server import burn_rate                    # imported here: pulls in FastAPI app
     base = 1_000_000

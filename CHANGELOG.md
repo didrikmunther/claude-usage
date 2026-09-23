@@ -2,6 +2,9 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- "Update" used to get stuck saying the app would restart in a moment, forever, whenever the update couldn't be applied. It now tells you what stopped it — and if the app doesn't come back up after installing, it says that too instead of leaving you waiting.
+
 ## [0.16.0] - 2026-09-21
 - Use Claude in both the desktop app and the terminal? A Desktop | CLI toggle next to "Claude" switches between them, in the menu bar too — handy when they're signed in to different accounts.
 - Claude usage from the terminal updates as you work instead of every few minutes, and runs into "rate limit" pauses far less often. Your existing Claude Code status line keeps working as before.

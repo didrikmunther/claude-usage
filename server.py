@@ -476,6 +476,11 @@ async def api_update():
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+@app.get("/api/update-status")
+async def api_update_status():
+    return JSONResponse(updater.apply_status())
+
+
 @app.post("/api/check-update")
 async def api_check_update():
     try:

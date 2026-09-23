@@ -17,6 +17,7 @@ import subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 VERSION_FILE = os.path.join(HERE, "VERSION")
 UPDATE_SCRIPT = os.path.join(HERE, "update.sh")
+STATUS_FILE = os.path.expanduser("~/.claude-usage/update-status")
 
 _TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
@@ -85,6 +86,18 @@ def check() -> dict:
         "latest": latest,
         "update_available": bool(latest) and is_newer(latest, cur),
     }
+
+
+def apply_status() -> dict:
+    """What the detached updater last reported: state is busy | ok | fail, or
+    idle when it has never run. The page that pressed Update polls this so a
+    refusal (dirty checkout, unreachable remote) surfaces instead of hanging."""
+    try:
+        with open(STATUS_FILE) as fh:
+            state, _, message = fh.read().strip().partition("\t")
+    except OSError:
+        return {"state": "idle", "message": ""}
+    return {"state": state or "idle", "message": message}
 
 
 def spawn_apply(tag: str) -> None:
