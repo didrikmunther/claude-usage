@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.17.0] - 2026-09-25
 - Claude usage now keeps up when you use Claude through apps like Conductor, not just in the terminal. Before, it could lag by up to half an hour.
 - When Claude gives a model like Fable its own weekly limit, an All | Fable switch next to "Claude" shows how much of that limit you've used and when it resets.
 
