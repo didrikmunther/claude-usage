@@ -414,10 +414,14 @@ function renderClaude(st, s) {
   st.last = s;
   if (s.resets) st.resets = s.resets;
   if (st === K) showClaude2();
+  const sl = scopedLimit(st);
+  const wk = sl ? sl.percent : s.sd;
   $(st.p + "fhFill").style.width = (s.fh ?? 0) + "%";
-  $(st.p + "sdFill").style.width = (s.sd ?? 0) + "%";
+  $(st.p + "sdFill").style.width = (wk ?? 0) + "%";
   $(st.p + "fhPct").textContent = fmtPct(s.fh);
-  $(st.p + "sdPct").textContent = fmtPct(s.sd);
+  $(st.p + "sdPct").textContent = fmtPct(wk);
+  $(st.p + "sdLabel").textContent = sl ? scope : "7-day";
+  paintScope(st, sl);
   renderScoped(st, s.limits);
   renderClaudeResets(st);
   renderClaudeForecast(st);
@@ -449,6 +453,42 @@ function wireAcct() {
     }));
 }
 
+// All | Fable (one button per model-scoped weekly limit): picks which weekly limit
+// the 7-day bar and its forecast row show. Per-browser, like the chart range; the
+// chart itself stays the all-models history (scoped limits aren't stored).
+let scope = localStorage.getItem("scope") || "";
+
+function scopedLimit(st) {
+  if (!scope || !st.last) return null;
+  return (st.last.limits || []).find((l) => l.scope && l.scope.model
+    && l.scope.model.display_name === scope) || null;
+}
+
+function paintScope(st, sl) {
+  const seg = $(st.p + "scopeSeg");
+  const names = (st.last.limits || []).filter((l) => l.scope && l.scope.model)
+    .map((l) => l.scope.model.display_name).filter(Boolean);
+  seg.hidden = !names.length;
+  // Built with the DOM rather than innerHTML so a model name is never parsed as markup.
+  seg.replaceChildren(...[["", "All"], ...names.map((n) => [n, n])].map(([v, text]) => {
+    const b = document.createElement("button");
+    b.dataset.s = v;
+    b.textContent = text;
+    b.classList.toggle("on", v === (sl ? scope : ""));
+    return b;
+  }));
+}
+
+function wireScope() {
+  document.querySelectorAll('.seg[data-sync="scope"]').forEach((seg) =>
+    seg.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      scope = b.dataset.s; localStorage.setItem("scope", scope);
+      for (const st of CLAUDES) if (st.last) renderClaude(st, st.last);
+    }));
+}
+
 function renderScoped(st, limits) {
   const box = $(st.p + "scoped");
   const scoped = (limits || []).filter((l) => l.scope && l.scope.model);
@@ -460,7 +500,8 @@ function renderScoped(st, limits) {
 
 function renderClaudeResets(st) {
   $(st.p + "fhReset").textContent = countdown(st.resets.five_hour);
-  $(st.p + "sdReset").textContent = countdown(st.resets.seven_day);
+  const sl = scopedLimit(st);
+  $(st.p + "sdReset").textContent = countdown(sl ? sl.resets_at : st.resets.seven_day);
 }
 
 // The text rows read the SAME trajectory the chart draws, so a sentence and the
@@ -496,7 +537,11 @@ function colReset(st, col) {
 function renderClaudeForecast(st) {
   if (!st.last) return;
   const rows = [];
-  for (const w of CLAUDE_WIN) {
+  // A scoped view swaps the weekly rows for that model's limit (straight-line
+  // pace: there's no stored history for it); the 5-hour limit still applies.
+  const sl = scopedLimit(st);
+  if (sl) rows.push(progRow(scope, forecast(sl.percent, 7 * 24 * 3600e3, sl.resets_at, null)));
+  for (const w of sl ? CLAUDE_WIN.filter((w) => w.key === "fh") : CLAUDE_WIN) {
     const cur = st.last[w.key];
     if (cur == null) continue;
     const resetIso = st.resets[w.reset];
@@ -1362,6 +1407,7 @@ window.addEventListener("load", () => {
   observeSize("cxChart", () => X.chart);
   wireControls();
   wireAcct();
+  wireScope();
   wireRange();
   wireForecastModel();
   wireAccuracy();
