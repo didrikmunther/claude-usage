@@ -257,7 +257,10 @@ class Hub:
         fresh, the rate-limited endpoint only when it isn't. None = nothing yet."""
         now = time.time()
         snap = claude_cli.read_snapshot()
-        max_age = CLI_REFRESH if claude_cli.statusline_hooked() else CLAUDE_MIN_INTERVAL
+        max_age = CLAUDE_MIN_INTERVAL
+        if (claude_cli.statusline_hooked() and snap
+                and claude_cli.last_activity() <= snap["ts"] / 1000):
+            max_age = CLI_REFRESH   # nothing ran since the status line's last reading
         if (not snap or now - snap["ts"] / 1000 > max_age) and now >= self._cli_api_next:
             self._cli_api_next = now + max_age
             try:

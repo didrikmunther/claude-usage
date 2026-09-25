@@ -417,6 +417,7 @@ def test_fetch_cli_asks_the_endpoint_only_when_the_snapshot_is_old(monkeypatch):
         return FIXTURE
     monkeypatch.setattr(claude_cli, "read_snapshot", lambda: snap)
     monkeypatch.setattr(claude_cli, "statusline_hooked", lambda: True)
+    monkeypatch.setattr(claude_cli, "last_activity", lambda: 0.0)
     monkeypatch.setattr(claude_cli, "fetch_usage", endpoint)
     monkeypatch.setattr(claude_cli, "write_snapshot", lambda *a, **k: None)
 
@@ -435,6 +436,27 @@ def test_fetch_cli_asks_the_endpoint_only_when_the_snapshot_is_old(monkeypatch):
     hub._cli_api_next = 0.0
     row, _ = hub._fetch_cli(4)                      # 429: the old snapshot, no error
     assert row["fh"] == 40.0 and hub._cli_api_next > now + 1000
+
+
+def test_fetch_cli_refreshes_sooner_after_headless_use(monkeypatch):
+    # Conductor / Agent SDK runs write transcripts but never run the status line
+    import time as _t
+    hub = _bare_hub()
+    hub._cli_api_next = 0.0
+    now = _t.time()
+    snap = {"ts": (now - 600) * 1000, "windows": {"five_hour": [40.0, now + 3600]}}
+    calls = []
+    monkeypatch.setattr(claude_cli, "read_snapshot", lambda: snap)
+    monkeypatch.setattr(claude_cli, "statusline_hooked", lambda: True)
+    monkeypatch.setattr(claude_cli, "fetch_usage", lambda: calls.append(1) or FIXTURE)
+    monkeypatch.setattr(claude_cli, "write_snapshot", lambda *a, **k: None)
+
+    monkeypatch.setattr(claude_cli, "last_activity", lambda: now - 900)
+    hub._fetch_cli(1)                               # idle since: 10 min is fresh enough
+    assert calls == []
+    monkeypatch.setattr(claude_cli, "last_activity", lambda: now - 60)
+    row, _ = hub._fetch_cli(2)                      # used since: ask the endpoint
+    assert row["fh"] == 35.0 and calls == [1]
 
 
 def test_claude_account_switch_drives_the_menu_bar():

@@ -15,6 +15,7 @@ statusline.py saves them to SNAPSHOT, and the server reads that file instead.
 from __future__ import annotations
 
 import datetime
+import glob
 import json
 import os
 import subprocess
@@ -28,6 +29,7 @@ OAUTH_BETA = "oauth-2025-04-20"
 SNAPSHOT = os.path.expanduser("~/.claude-usage/cli-limits.json")
 SETTINGS = os.path.expanduser("~/.claude/settings.json")
 CLAUDE_JSON = os.path.expanduser("~/.claude.json")
+TRANSCRIPTS = os.path.expanduser("~/.claude/projects/*/*.jsonl")
 WINDOWS = ("five_hour", "seven_day")
 SAME_WINDOW_S = 60   # resets_at wobbles by a second or so between responses
 
@@ -136,6 +138,14 @@ def statusline_hooked() -> bool:
     except (OSError, ValueError):
         return False
     return "statusline.py" in cmd
+
+
+def last_activity() -> float:
+    """Newest Claude Code transcript write (epoch s). Headless runs (Agent SDK:
+    Conductor, `claude -p`) never draw a status line, so a transcript newer than
+    the snapshot means use the snapshot missed."""
+    # ponytail: stats every transcript (~0.02s for 450); cap by dir mtime if it grows huge
+    return max((os.path.getmtime(p) for p in glob.glob(TRANSCRIPTS)), default=0.0)
 
 
 # ---- snapshot: {"ts": ms, "windows": {name: [percent, resets_at epoch s]}} ----
