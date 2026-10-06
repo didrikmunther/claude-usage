@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.18.1] - 2026-10-06
 - Opening the dashboard or the menu-bar panel now shows your latest usage straight away. No more bars sliding in, gauges sweeping, or numbers catching up after a moment.
 
 ## [0.18.0] - 2026-10-06
