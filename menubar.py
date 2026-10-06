@@ -204,9 +204,10 @@ class AppDelegate(NSObject):
             if not self._loaded:                   # never loaded (server was down at launch)? load now
                 self._loadDashboard()
             else:
-                # Rev the gauges on every open (the webview stays loaded between opens).
+                # The webview stays loaded between opens but is paused while
+                # closed: catch it up to the latest data straight away.
                 self.web.evaluateJavaScript_completionHandler_(
-                    "window.revGauges && window.revGauges()", None)
+                    "window.showLatest && window.showLatest()", None)
 
     # --- webview loading (retry until the server is reachable) ---
     def _loadDashboard(self):

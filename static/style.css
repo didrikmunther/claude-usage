@@ -36,6 +36,10 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 .wrap { max-width: 760px; margin: 0 auto; padding: 40px 24px 64px; transition: max-width .2s; }
+/* Until the first data has rendered, show nothing rather than an empty layout
+   that then jumps; and while it renders, nothing animates into place. */
+body.booting .wrap { visibility: hidden; }
+body.still *, body.still *::before, body.still *::after { transition: none !important; }
 body.two .wrap { max-width: 1180px; }
 .muted { color: var(--muted); }
 

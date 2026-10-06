@@ -1042,6 +1042,11 @@ function connect() {
       bootVersion = bootVersion || running;
       if (m.limits) bounds = m.limits;
       $("ival").min = bounds.min; $("ivalNum").min = bounds.min; $("ivalNum").max = bounds.max;
+      // Settings before the first draw, so it is drawn once with the right model
+      // and account rather than with the defaults and then redrawn.
+      setForecastModels(m);
+      if (m.claude_account) { acct = m.claude_account; paintAcct(); }
+      if (m.working_days != null) setWorkingDays(m.working_days);
       loadHistory(m.history || []);
       if (m.claude) renderClaude(C, m.claude);
       if (m.claude2) renderClaude(K, m.claude2);
@@ -1051,17 +1056,15 @@ function connect() {
       if (m.xcost) renderXcost(m.xcost);
       if (m.update) renderUpdate(m.update);
       setIntervalUI(m.interval);
-      setForecastModels(m);
-      if (m.claude_account) { acct = m.claude_account; paintAcct(); }
-      if (m.working_days != null) setWorkingDays(m.working_days);
       if (m.changelog && m.changelog.length) {
         renderChangelog(m.changelog, "update",
           m.changelog_from ? "since v" + m.changelog_from : "");
       }
       setStatus(m.status);
-      updateGauges();                       // set targets from history before revving
+      updateGauges();
+      snapGauges();
       scoreForecasts();
-      if (!revvedOnce) { revvedOnce = true; window.revGauges(); }
+      reveal();
     } else if (m.type === "sample") {
       if (m.claude) { pushPoint(C, m.claude.ts / 1000, m.claude.fh, m.claude.sd); renderClaude(C, m.claude); }
       if (m.claude2) { pushPoint(K, m.claude2.ts / 1000, m.claude2.fh, m.claude2.sd); renderClaude(K, m.claude2); }
@@ -1095,7 +1098,7 @@ function connect() {
 // ---- 1-second tick: keep countdowns + forecasts fresh ----
 // ---- burn-rate gauges (speedometer of last-5-min %/h) ----
 const GAUGE_MAX = 60;   // %/h full-scale
-let claudeGauge = null, claude2Gauge = null, codexGauge = null, revvedOnce = false;
+let claudeGauge = null, claude2Gauge = null, codexGauge = null;
 
 function makeGauge(elId, zoneStops) {
   const el = $(elId);
@@ -1152,25 +1155,16 @@ function makeGauge(elId, zoneStops) {
     const f = dv / G;
     val.style.fill = f < zs[0] ? "#16a34a" : f < zs[1] ? "#d97706" : "#dc2626";
   };
-  // One always-on animation loop drives the needle so it never jumps: normally
-  // it eases toward `target` (the live rate); during a rev it follows the
-  // ignition sweep, which itself settles onto `target`.
-  const REV_DUR = 1100, SMOOTH = 0.12, VIB_AMP = 4, VIB_FREQ = 0.08, PUFF_MS = 120;
-  let target = 0, cur = 0, revActive = false, revStart = 0, over = false, lastPuff = 0;
+  // One always-on animation loop drives the needle: it eases toward `target`
+  // (the live rate) as samples arrive. Opening the page snaps it there instead.
+  const SMOOTH = 0.12, VIB_AMP = 4, VIB_FREQ = 0.08, PUFF_MS = 120;
+  let target = 0, cur = 0, over = false, lastPuff = 0;
   const loop = (now) => {
-    if (over && !revActive && now - lastPuff > PUFF_MS) { lastPuff = now; puff(); }
-    if (revActive) {
-      const t = Math.min(1, (now - revStart) / REV_DUR);
-      cur = t < 0.5
-        ? GAUGE_MAX * (1 - (1 - t / 0.5) ** 2)                        // rise to redline
-        : GAUGE_MAX + (target - GAUGE_MAX) * (1 - (1 - (t - 0.5) / 0.5) ** 2); // fall → live
-      if (t >= 1) revActive = false;
-    } else {
-      cur += (target - cur) * SMOOTH;                                 // exponential ease
-      if (Math.abs(target - cur) < 0.03) cur = target;
-    }
+    if (over && now - lastPuff > PUFF_MS) { lastPuff = now; puff(); }
+    cur += (target - cur) * SMOOTH;                                   // exponential ease
+    if (Math.abs(target - cur) < 0.03) cur = target;
     // Over the dial's max → buzz the needle against the redline (clamped at max).
-    const dv = (over && !revActive) ? cur + Math.sin(now * VIB_FREQ) * VIB_AMP : cur;
+    const dv = over ? cur + Math.sin(now * VIB_FREQ) * VIB_AMP : cur;
     setNeedle(dv);
     requestAnimationFrame(loop);
   };
@@ -1186,12 +1180,11 @@ function makeGauge(elId, zoneStops) {
       over = (rate || 0) > mx;               // past full-scale → vibrate
       target = Math.min(1, Math.max(0, (rate || 0) / mx)) * GAUGE_MAX;
     },
-    rev() { revActive = true; revStart = performance.now(); },
+    snap() { cur = target; },
   };
 }
 
-// Rev both gauges — called on page load and by the menu bar on each popover open.
-window.revGauges = () => { for (const g of [claudeGauge, claude2Gauge, codexGauge]) if (g) g.rev(); };
+function snapGauges() { for (const g of [claudeGauge, claude2Gauge, codexGauge]) if (g) g.snap(); }
 
 // Which window the gauge shows: the SHORTEST window that's actively burning
 // (so an active 5-hour beats a slow 7-day trend while you're coding); if none is
@@ -1246,6 +1239,32 @@ function newestSampleMs() {
   }
   return newest || null;
 }
+
+// Opening the dashboard shows the current state at once. The page starts hidden
+// (body.booting) with transitions off (body.still); the first "init" renders
+// everything, then reveal() shows it and turns transitions back on, so nothing
+// grows, sweeps or reflows into place.
+function reveal() {
+  document.body.classList.remove("booting");
+  requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove("still")));
+}
+
+// The menu bar calls this each time its panel opens. The page has been paused
+// while the panel was closed, so fetch what it missed now — not on the next
+// tick — and put it up without animating the catch-up.
+window.showLatest = async () => {
+  document.body.classList.add("still");
+  await resync();
+  for (const st of CLAUDES) renderClaudeForecast(st);
+  renderCodexForecast();
+  renderConsumed();
+  updateGauges();
+  snapGauges();
+  lastTick = Date.now();                  // the pause is handled: don't resync again
+  reveal();
+};
+// Older menu-bar builds call this name on open.
+window.revGauges = window.showLatest;
 
 // A paused page (closed menu-bar panel, background tab, sleep) holds data only as
 // fresh as the pause — the socket's samples sit buffered until it runs again. Ask
@@ -1442,6 +1461,8 @@ window.addEventListener("load", () => {
   claudeGauge = makeGauge("claudeGauge", [0.3, 0.6]);   // 0–100 %/h dial, red from 60
   claude2Gauge = makeGauge("k_claudeGauge", [0.3, 0.6]);
   codexGauge = makeGauge("codexGauge");                  // window-relative, red from 2× sustainable
-  connect();   // rev fires from the first WS "init", once the live rate is known
+  connect();
+  // Never stay hidden: if the server is down there is still a status to show.
+  setTimeout(reveal, 1500);
   setInterval(tick, 1000);
 });

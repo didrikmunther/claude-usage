@@ -2,6 +2,9 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- Opening the dashboard or the menu-bar panel now shows your latest usage straight away. No more bars sliding in, gauges sweeping, or numbers catching up after a moment.
+
 ## [0.18.0] - 2026-10-06
 - Claude and Codex now each have their own forecast style and chart range (24h, Week, Full), so changing one no longer changes the other.
 - New "Analog" forecast: it looks at what happened after earlier moments like now, the same time of day and the same busy-or-idle pace. It's the most accurate forecast for Codex so far, and new Codex setups start on it.
