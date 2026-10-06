@@ -2,6 +2,10 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- Claude and Codex now each have their own forecast style and chart range (24h, Week, Full), so changing one no longer changes the other.
+- New "Analog" forecast: it looks at what happened after earlier moments like now, the same time of day and the same busy-or-idle pace. It's the most accurate forecast for Codex so far, and new Codex setups start on it.
+
 ## [0.17.0] - 2026-09-25
 - Claude usage now keeps up when you use Claude through apps like Conductor, not just in the terminal. Before, it could lag by up to half an hour.
 - When Claude gives a model like Fable its own weekly limit, an All | Fable switch next to "Claude" shows how much of that limit you've used and when it resets.

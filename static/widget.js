@@ -50,7 +50,12 @@ function outlook(cur, winMs, resetIso, samples, proj) {
 
 // Which predictor to use. The server owns it, so the pill and the dashboard
 // cannot disagree; this web view has no persistent storage of its own.
-let forecastModel = "adaptive";
+// One per provider: "forecast_model" is Claude's, "forecast_model_codex" Codex's.
+const forecastModels = { claude: "adaptive", codex: "analog" };
+function setForecastModels(m) {
+  if (m.forecast_model) forecastModels.claude = m.forecast_model;
+  if (m.forecast_model_codex) forecastModels.codex = m.forecast_model_codex;
+}
 let workingDays = [0, 1, 2, 3, 4, 5, 6];   // server-owned, same as the model
 
 // The pill re-renders every second and cycle+tod is a simulation, so the
@@ -62,9 +67,10 @@ function projection(st, col, resetIso, reset) {
   const now = ts[ts.length - 1];
   const horizon = new Date(resetIso).getTime() / 1000 - now;
   if (!(horizon > 0)) return null;
-  const key = `${st === C ? "c" : "x"}|${col}|${forecastModel}|${workingDays}|${now}|${resetIso}`;
+  const model = forecastModels[st === C ? "claude" : "codex"];
+  const key = `${st === C ? "c" : "x"}|${col}|${model}|${workingDays}|${now}|${resetIso}`;
   if (projCache.has(key)) return projCache.get(key);
-  const P = Predictors[forecastModel] || Predictors.linear;
+  const P = Predictors[model] || Predictors.linear;
   let pts = null;
   try {
     pts = P.predict(toPts(ts, st.data[col]),
@@ -195,11 +201,11 @@ function connect() {
       const c = cli ? m.claude2 : m.claude;
       if (c) { C.last = c; if (c.resets) C.resets = c.resets; }
       if (m.codex) X.last = m.codex;
-      if (m.forecast_model) forecastModel = m.forecast_model;
+      setForecastModels(m);
       if (m.working_days != null) workingDays = String(m.working_days).split(",").filter(Boolean).map(Number);
       render();
     } else if (m.type === "forecast_model" || m.type === "working_days") {
-      if (m.forecast_model) forecastModel = m.forecast_model;
+      setForecastModels(m);
       if (m.working_days != null) workingDays = String(m.working_days).split(",").filter(Boolean).map(Number);
       projCache.clear();
       render();

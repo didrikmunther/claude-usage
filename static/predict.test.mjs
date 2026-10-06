@@ -576,3 +576,46 @@ test("gateWorkDays still lets a reset through on a day off", () => {
   const out = gateWorkDays(pts, { workDays: [1, 2, 3, 4, 5] });
   assert.equal(out[1].y, 0, "the window empties on schedule, calendar or not");
 });
+
+// ---- analog: the median rise after past moments that looked like now ------
+// Ten days that climb 0.5pp/h from 00:00 to 06:00 UTC and sit still otherwise,
+// all inside one long cycle (no reset in view).
+const LONG = { P: 30 * 86400, R: 0 };
+const morningBurner = (until) => {
+  const out = [];
+  for (let t = 0; t <= until; t += 600) {
+    const day = Math.floor(t / 86400), into = Math.min(t % 86400, 6 * 3600);
+    out.push({ t, y: 0.5 * (day * 6 + into / 3600) });
+  }
+  return out;
+};
+
+test("analog adds the rise that followed past moments in the same state", () => {
+  const now = 9 * 86400 + 3 * 3600;                 // 03:00, burning
+  const pts = morningBurner(now);
+  const r = Predictors.analog.predict(pts, { now, horizon: 2 * 3600, step: 3600, reset: LONG, hourOf: utcHour });
+  const y0 = pts.at(-1).y;
+  assert.equal(r.method, "analog");
+  assert.equal(r.points[0].y, y0, "anchored at the last observed value");
+  assert.ok(Math.abs(r.points[1].y - (y0 + 0.5)) < 1e-9, `expected +0.5 after 1h, got ${r.points[1].y - y0}`);
+  assert.ok(r.points[2].y > r.points[1].y, "and still climbing an hour later");
+});
+
+test("analog holds still when moments like now were followed by nothing", () => {
+  const now = 9 * 86400 + 12 * 3600;                // midday, idle
+  const pts = morningBurner(now);
+  const r = Predictors.analog.predict(pts, { now, horizon: 6 * 3600, step: 3600, reset: LONG, hourOf: utcHour });
+  assert.ok(r.points.every((p) => Math.abs(p.y - pts.at(-1).y) < 1e-9), "an idle afternoon stays flat");
+});
+
+test("analog restarts after a reset at the level past cycles reached by then", () => {
+  // Daily cycles: 2pp/h for the first ten hours, then flat until midnight's reset.
+  const DAY = { P: 86400, R: 0 };
+  const now = 9 * 86400 + 20 * 3600;
+  const pts = [];
+  for (let t = 0; t <= now; t += 600) pts.push({ t, y: 2 * Math.min((t % 86400) / 3600, 10) });
+  const r = Predictors.analog.predict(pts, { now, horizon: 10 * 3600, step: 3600, reset: DAY, hourOf: utcHour });
+  const at = (t) => r.points.find((p) => p.t === t).y;
+  assert.equal(at(now + 3 * 3600), 20, "no rise in the idle evening");
+  assert.equal(at(10 * 86400 + 3 * 3600), 6, "three hours into the next cycle, past cycles were at 6");
+});

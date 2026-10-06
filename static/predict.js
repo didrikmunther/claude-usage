@@ -343,6 +343,35 @@ const ADAPT_HALFLIFE = 3600;      // seconds for the burst to fade halfway to th
 const ADAPT_FLOOR = 0.5;          // ...and it fades to this fraction of the cycle average
 const ADAPT_NEXT = 0.5;           // and the cycle after a reset accrues this much of that
 
+// "analog" tuning. Picked on a walk-forward backtest over ~7 weeks of history,
+// tuned only on the weeks before Sep 3 and checked on the weeks after.
+const ANALOG_HALFLIFE = 7 * 86400;   // an analog from a week ago counts half
+const ANALOG_BURN = 0.3;             // points gained in the last hour that count as "burning now"
+const ANALOG_TOD_BLOCKS = 4;         // the day split into quarters
+const ANALOG_MIN = 10;               // fewest matches before the state condition is dropped
+
+// Nearest sample's value within 15 minutes of `t`, else null (a gap).
+function nearestY(pts, t) {
+  let lo = 0, hi = pts.length - 1;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (pts[m].t < t) lo = m + 1; else hi = m; }
+  let best = null, bd = Infinity;
+  for (let k = Math.max(0, lo - 1); k <= Math.min(pts.length - 1, lo + 1); k++) {
+    const d = Math.abs(pts[k].t - t);
+    if (d < bd) { bd = d; best = pts[k]; }
+  }
+  return bd <= 900 ? best.y : null;
+}
+
+// Weighted median: the value where the cumulative weight first reaches half.
+function weightedMedian(vals, ws) {
+  const idx = vals.map((_, i) => i).sort((a, b) => vals[a] - vals[b]);
+  let tot = 0;
+  for (const w of ws) tot += w;
+  let acc = 0;
+  for (const i of idx) { acc += ws[i]; if (acc >= tot / 2) return vals[i]; }
+  return 0;
+}
+
 // ---- predictive distribution --------------------------------------------
 // A predictor answers predict(t, history) -> {p10, p50, p90}: the line is the
 // median, the cone is p10..p90. Quantiles rather than (mean, variance), because
@@ -611,6 +640,91 @@ const Predictors = {
         out.push({ t, y: Math.max(0, Math.min(100, y)) });
       }
       return withBand(pts, out, opts, "adaptive");
+    },
+  },
+
+  // "What happened the last times it looked like this?" Rather than fitting a
+  // rate, find the past moments in the same state as now — burning or idle, and
+  // the same quarter of the day — and add the median rise that followed them,
+  // k hours on. After a reset, the median level past cycles had reached at the
+  // same age.
+  //
+  // The median, not the mean, because the rises are mostly exactly zero with
+  // the odd spike: the mean is pulled up by the spikes, the median is the
+  // estimate that minimises the absolute error. On the held-out weeks it beat
+  // cycle by ~11% on Codex's weekly window, but not adaptive on Claude's.
+  analog: {
+    method: "analog",
+    predict(samples, opts = {}) {
+      const pts = (samples || []).filter((s) => s && s.y != null);
+      if (!pts.length) return { points: [], method: "analog" };
+      const H = 3600;
+      const now = opts.now != null ? opts.now : pts[pts.length - 1].t;
+      const horizon = opts.horizon || 0;
+      const y0 = pts[pts.length - 1].y;
+      const hourOf = opts.hourOf ?? hourOfLocal;
+      // Hourly grid ending at `now`: g[j] is the value (J - j) hours ago.
+      const J = Math.max(0, Math.floor((now - pts[0].t) / H));
+      const g = [];
+      for (let j = 0; j <= J; j++) g.push(nearestY(pts, now - (J - j) * H));
+      // epoch[j] counts the resets before grid j, so no analog spans one.
+      const epoch = [], drops = [];
+      let n = 0, prev = null;
+      for (let j = 0; j <= J; j++) {
+        if (g[j] != null) {
+          if (prev != null && g[j] < prev - RESET_DROP) { n++; drops.push(j); }
+          prev = g[j];
+        }
+        epoch.push(n);
+      }
+      const state = (j) => {
+        if (j < 1 || g[j] == null || g[j - 1] == null) return null;
+        const burning = g[j] - g[j - 1] > ANALOG_BURN ? 1 : 0;
+        const block = Math.floor(hourOf(now - (J - j) * H) / (24 / ANALOG_TOD_BLOCKS));
+        return burning * 10 + block;
+      };
+      const s0 = state(J);
+      const weight = (j) => Math.pow(0.5, ((J - j) * H) / ANALOG_HALFLIFE);
+      // Median rise over k hours, from analogs in state s0 (or any state).
+      const riseOver = (k, s) => {
+        const v = [], w = [];
+        for (let i = 1; i + k <= J; i++) {
+          if (g[i] == null || g[i + k] == null || epoch[i + k] !== epoch[i]) continue;
+          if (s != null && state(i) !== s) continue;
+          v.push(g[i + k] - g[i]); w.push(weight(i));
+        }
+        return v.length >= ANALOG_MIN ? weightedMedian(v, w) : null;
+      };
+      // Median level past cycles had reached `age` hours after their reset.
+      const levelAt = (age) => {
+        const v = [], w = [];
+        for (const d of drops) {
+          const j = d + age;
+          if (j > J || g[j] == null || epoch[j] !== epoch[d]) continue;
+          v.push(g[j]); w.push(weight(j));
+        }
+        return v.length ? weightedMedian(v, w) : 0;
+      };
+      const reset = resolveReset(pts, opts);
+      const cyc = (t) => (reset && reset.P > 0 ? Math.floor((t - reset.R) / reset.P) : 0);
+      const here = cyc(now);
+      const out = [];
+      let floor = y0;                      // usage never falls within a cycle
+      const K = Math.ceil(horizon / H);
+      for (let k = 0; k <= K; k++) {
+        const t = Math.min(now + k * H, now + horizon);
+        let y;
+        if (cyc(t) > here) {
+          y = levelAt(Math.round((t - (reset.R + cyc(t) * reset.P)) / H));
+        } else if (k === 0) {
+          y = y0;
+        } else {
+          const rise = (s0 != null ? riseOver(k, s0) : null) ?? riseOver(k, null) ?? 0;
+          y = floor = Math.max(floor, y0 + Math.max(0, rise));
+        }
+        out.push({ t, y: Math.max(0, Math.min(100, y)) });
+      }
+      return withBand(pts, out, opts, "analog");
     },
   },
 

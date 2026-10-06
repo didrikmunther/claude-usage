@@ -14,14 +14,24 @@ let bounds = { min: 10, max: 3600 };
 const MAX_POINTS = 20000;
 
 const RANGES = { "24h": 24 * 3600, "7d": 7 * 24 * 3600, full: Infinity };
-let range = RANGES[localStorage.getItem("range")] !== undefined ? localStorage.getItem("range") : "24h";
+// Claude and Codex each keep their own range and forecast model: C and K are
+// Claude, X is Codex.
+const provOf = (st) => (st === X ? "codex" : "claude");
+// Claude keeps the original "range" key so an existing choice carries over.
+const RANGE_KEYS = { claude: "range", codex: "range_codex" };
+const ranges = {};
+for (const [p, k] of Object.entries(RANGE_KEYS)) {
+  const v = localStorage.getItem(k);
+  ranges[p] = RANGES[v] !== undefined ? v : "24h";
+}
 
 // Which forecast strategy drives the chart projection (see predict.js).
-const FORECAST_MODELS = ["adaptive", "linear", "cycle", "cycle+tod"];
+const FORECAST_MODELS = ["adaptive", "linear", "cycle", "cycle+tod", "analog"];
 // Server-owned, not localStorage: the floating pill runs in a web view with no
 // persistent storage, so this is the only place both surfaces can read one value.
 // Arrives on the WebSocket "init" and on every "forecast_model" broadcast.
-let forecastModel = "adaptive";
+const forecastModels = { claude: "adaptive", codex: "analog" };
+const modelOf = (st) => forecastModels[provOf(st)];
 
 // Local weekday numbers you work on (0 = Sunday). Server-owned, like the model:
 // all seven means the setting is off and nothing changes.
@@ -58,9 +68,15 @@ function wireSettings() {
   paintWorkingDays();
 }
 
-function setForecastModel(m) {
-  if (!FORECAST_MODELS.includes(m) || m === forecastModel) return;
-  forecastModel = m;
+// Takes the "forecast_model" (Claude) / "forecast_model_codex" fields of a message.
+function setForecastModels(msg) {
+  let changed = false;
+  for (const [p, m] of [["claude", msg.forecast_model], ["codex", msg.forecast_model_codex]]) {
+    if (!FORECAST_MODELS.includes(m) || m === forecastModels[p]) continue;
+    forecastModels[p] = m;
+    changed = true;
+  }
+  if (!changed) return;
   paintForecastModel();
   projCache.clear();
   applyRangeAll();
@@ -189,9 +205,9 @@ function fmtAxis(u, splits) {
 // Show only the slice within the selected range (measured back from newest sample).
 function applyRange(st) {
   if (!st.chart) return;
-  const secs = RANGES[range];
+  const secs = RANGES[ranges[provOf(st)]];
   let ts = st.data[0], a = st.data[1], b = st.data[2];
-  st.chart.setData(withProjection(ts, a, b, panelResets(st), secs));
+  st.chart.setData(withProjection(ts, a, b, panelResets(st), secs, modelOf(st)));
 }
 
 function toSamples(ts, ys) {
@@ -237,7 +253,7 @@ function panelResets(st) {
 // is the visible window (Infinity = full). The model always trains on the FULL
 // history — the range only controls how much history is shown and how far ahead
 // the forecast is drawn — so the prediction is stable across range switches.
-function withProjection(tsFull, aFull, bFull, rst, rangeSecs) {
+function withProjection(tsFull, aFull, bFull, rst, rangeSecs, model) {
   const nFull = tsFull.length;
   const now = nFull ? tsFull[nFull - 1] : 0;
   // Slice for DISPLAY only.
@@ -257,7 +273,7 @@ function withProjection(tsFull, aFull, bFull, rst, rangeSecs) {
   // Fixed hourly step (not tied to the range) so the forecast resolution — and
   // thus the overlapping trajectory — is identical whatever range is selected.
   const step = 3600;
-  const P = Predictors[forecastModel] || Predictors.linear;
+  const P = Predictors[model] || Predictors.linear;
 
   const rA = P.predict(toSamples(tsFull, aFull), { now, horizon, step, reset: rst && rst.a, workDays: workingDays });
   const projA = rA.points, loA = rA.lo || null, hiA = rA.hi || null;
@@ -301,7 +317,7 @@ function applyRangeAll() { applyRange(C); applyRange(K); applyRange(X); renderCo
 // Percentage units consumed within the visible range = sum of positive
 // step-to-step increments per series (resets/decreases don't count).
 function consumedInRange(st) {
-  const secs = RANGES[range];
+  const secs = RANGES[ranges[provOf(st)]];
   const ts = st.data[0];
   let i = 0;
   if (secs !== Infinity && ts.length) {
@@ -515,9 +531,9 @@ function windowProjection(st, col, resetIso, reset) {
   const now = ts[ts.length - 1];
   const horizon = new Date(resetIso).getTime() / 1000 - now;
   if (!(horizon > 0)) return null;
-  const key = `${st.key || "x"}|${col}|${forecastModel}|${now}|${resetIso}`;
+  const key = `${st.key || "x"}|${col}|${modelOf(st)}|${now}|${resetIso}`;
   if (projCache.has(key)) return projCache.get(key);
-  const P = Predictors[forecastModel] || Predictors.linear;
+  const P = Predictors[modelOf(st)] || Predictors.linear;
   let pts = null;
   try {
     pts = P.predict(toSamples(ts, st.data[col]), { now, horizon, step: 3600, reset, workDays: workingDays }).points;
@@ -675,32 +691,38 @@ function wireControls() {
   $("pollNow").addEventListener("click", () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ poll_now: true })));
 }
 
+// One range per provider; both Claude columns (desktop + CLI) share Claude's.
 function wireRange() {
   const groups = [...document.querySelectorAll('.seg[data-sync="range"]')];
   const setActive = () => groups.forEach((g) =>
-    g.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.r === range)));
+    g.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.r === ranges[g.dataset.p])));
   setActive();
   groups.forEach((g) => g.querySelectorAll("button").forEach((b) =>
     b.addEventListener("click", () => {
-      range = b.dataset.r; localStorage.setItem("range", range);
+      const p = g.dataset.p;
+      ranges[p] = b.dataset.r;
+      try { localStorage.setItem(RANGE_KEYS[p], ranges[p]); } catch {}
       setActive(); applyRangeAll();
     })));
 }
 
-// One control per panel, kept in step the way the range buttons are.
+// One model per provider, kept in step across that provider's panels.
 function wireForecastModel() {
-  document.querySelectorAll('.seg[data-sync="model"] button').forEach((b) =>
-    b.addEventListener("click", () => {
+  document.querySelectorAll('.seg[data-sync="model"]').forEach((g) =>
+    g.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
       // Tell the server; the broadcast comes back and applies it everywhere,
       // including the floating pill.
-      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ set_forecast_model: b.dataset.m }));
-    }));
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ set_forecast_model: b.dataset.m, provider: g.dataset.p }));
+      }
+    })));
   paintForecastModel();
 }
 
 function paintForecastModel() {
-  document.querySelectorAll('.seg[data-sync="model"] button').forEach((b) =>
-    b.classList.toggle("on", b.dataset.m === forecastModel));
+  document.querySelectorAll('.seg[data-sync="model"]').forEach((g) =>
+    g.querySelectorAll("button").forEach((b) =>
+      b.classList.toggle("on", b.dataset.m === forecastModels[g.dataset.p])));
 }
 
 function setIntervalUI(n) {
@@ -1029,7 +1051,7 @@ function connect() {
       if (m.xcost) renderXcost(m.xcost);
       if (m.update) renderUpdate(m.update);
       setIntervalUI(m.interval);
-      if (m.forecast_model) setForecastModel(m.forecast_model);
+      setForecastModels(m);
       if (m.claude_account) { acct = m.claude_account; paintAcct(); }
       if (m.working_days != null) setWorkingDays(m.working_days);
       if (m.changelog && m.changelog.length) {
@@ -1063,7 +1085,7 @@ function connect() {
     } else if (m.type === "claude_account") {
       acct = m.claude_account; paintAcct();
     } else if (m.type === "forecast_model") {
-      setForecastModel(m.forecast_model);
+      setForecastModels(m);
     } else if (m.type === "interval") {
       setIntervalUI(m.interval);
     }
@@ -1327,7 +1349,7 @@ function renderAccuracy(msg) {
       const cls = Math.abs(row[h] - best[h]) < 1e-9 ? ' class="best"' : "";
       return `<td${cls}>${row[h].toFixed(1)}</td>`;
     }).join("");
-    return `<tr${name === forecastModel ? ' class="active"' : ""}><td>${name}</td>${cells}</tr>`;
+    return `<tr${name === forecastModels.claude ? ' class="active"' : ""}><td>${name}</td>${cells}</tr>`;
   }).join("");
   body.innerHTML =
     `<table class="acc-tbl"><thead>${head}</thead><tbody>${rows}</tbody></table>` +

@@ -61,6 +61,19 @@ def test_store_interval_clamped_and_persisted():
         assert Store(path).get_interval() == 120       # persisted across instances
 
 
+def test_store_forecast_model_is_per_provider():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "u.db")
+        s = Store(path)
+        assert (s.get_forecast_model("claude"), s.get_forecast_model("codex")) == ("adaptive", "analog")
+        s.set_forecast_model("linear", "codex")
+        assert s.get_forecast_model("claude") == "adaptive"          # Claude untouched
+        assert s.set_forecast_model("bogus", "codex") == "linear"    # unknown model ignored
+        s.set_forecast_model("cycle+tod")                            # no provider = Claude
+        s2 = Store(path)
+        assert (s2.get_forecast_model("claude"), s2.get_forecast_model("codex")) == ("cycle+tod", "linear")
+
+
 # --- menu-bar title formatting ---
 _BASE = datetime.datetime(2026, 1, 1, 10, 0, tzinfo=datetime.timezone.utc)
 

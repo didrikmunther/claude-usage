@@ -57,7 +57,7 @@
 
         <section class="card chart-card">
           <div class="chart-head">
-            <div class="seg" data-sync="range">
+            <div class="seg" data-p="claude" data-sync="range">
               <button data-r="24h">24h</button>
               <button data-r="7d">Week</button>
               <button data-r="full">Full</button>
@@ -76,11 +76,12 @@
         <section class="card prog-card">
           <div class="prog-head">
             <span class="muted">forecast</span>
-            <div class="seg seg-sm" data-sync="model">
+            <div class="seg seg-sm" data-p="claude" data-sync="model">
               <button data-m="adaptive">Adaptive</button>
               <button data-m="linear">Linear</button>
               <button data-m="cycle">Cycle</button>
               <button data-m="cycle+tod">Cycle+day</button>
+              <button data-m="analog">Analog</button>
             </div>
           </div>
           <div id="prog" class="prog"><div class="prog-row muted"><span class="prog-msg">gathering data…</span></div></div>
@@ -104,7 +105,7 @@
 
         <section class="card chart-card">
           <div class="chart-head">
-            <div class="seg" data-sync="range">
+            <div class="seg" data-p="codex" data-sync="range">
               <button data-r="24h">24h</button>
               <button data-r="7d">Week</button>
               <button data-r="full">Full</button>
@@ -120,11 +121,12 @@
         <section class="card prog-card">
           <div class="prog-head">
             <span class="muted">forecast</span>
-            <div class="seg seg-sm" data-sync="model">
+            <div class="seg seg-sm" data-p="codex" data-sync="model">
               <button data-m="adaptive">Adaptive</button>
               <button data-m="linear">Linear</button>
               <button data-m="cycle">Cycle</button>
               <button data-m="cycle+tod">Cycle+day</button>
+              <button data-m="analog">Analog</button>
             </div>
           </div>
           <div id="cxProg" class="prog"><div class="prog-row muted"><span class="prog-msg">gathering data…</span></div></div>

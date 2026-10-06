@@ -76,7 +76,8 @@ class Hub:
         self.claude_src: str | None = None   # "cli" | "desktop" | None
         self.store: Store | None = None
         self.interval: int = 60
-        self.forecast_model: str = DEFAULT_FORECAST_MODEL
+        self.forecast_model: str = DEFAULT_FORECAST_MODEL          # Claude's
+        self.forecast_model_codex: str = DEFAULT_FORECAST_MODEL
         self.claude_account: str = "desktop"
         self.working_days: str = DEFAULT_WORKING_DAYS
         self.changelog_seen: str | None = None
@@ -113,7 +114,8 @@ class Hub:
         self.xcost_available = codex_cost.available()
         self.store = Store(DB_PATH)
         self.interval = self.store.get_interval()
-        self.forecast_model = self.store.get_forecast_model()
+        self.forecast_model = self.store.get_forecast_model("claude")
+        self.forecast_model_codex = self.store.get_forecast_model("codex")
         self.claude_account = self.store.get_claude_account()
         self.working_days = self.store.get_working_days()
         # Seed "last changelog shown" on the first changelog-aware start: the
@@ -167,9 +169,16 @@ class Hub:
         self.working_days = self.store.set_working_days(days)
         return self.working_days
 
-    def set_forecast_model(self, model: str) -> str:
-        self.forecast_model = self.store.set_forecast_model(model)
-        return self.forecast_model
+    def set_forecast_model(self, model: str, provider: str = "claude") -> None:
+        m = self.store.set_forecast_model(model, provider)
+        if provider == "codex":
+            self.forecast_model_codex = m
+        elif provider == "claude":
+            self.forecast_model = m
+
+    def forecast_models(self) -> dict:
+        return {"forecast_model": self.forecast_model,
+                "forecast_model_codex": self.forecast_model_codex}
 
     def set_claude_account(self, acct: str) -> str:
         self.claude_account = self.store.set_claude_account(acct)
@@ -453,7 +462,7 @@ async def api_latest():
                          "xcost": hub.xcost_latest, "xcost_available": hub.xcost_available,
                          "update": hub.update_info, **hub.rates(),
                          "status": hub.status, "interval": hub.interval,
-                         "forecast_model": hub.forecast_model,
+                         **hub.forecast_models(),
                          "claude_account": hub.claude_account,
                          "working_days": hub.working_days})
 
@@ -517,7 +526,7 @@ async def ws(sock: WebSocket):
         "changelog_from": hub.changelog_seen,
         "status": hub.status,
         "interval": hub.interval,
-        "forecast_model": hub.forecast_model,
+        **hub.forecast_models(),
         "claude_account": hub.claude_account,
         "working_days": hub.working_days,
         "limits": {"min": MIN_INTERVAL, "max": MAX_INTERVAL},
@@ -529,8 +538,8 @@ async def ws(sock: WebSocket):
                 n = hub.set_interval(msg["set_interval"])
                 await hub.broadcast({"type": "interval", "interval": n})
             elif "set_forecast_model" in msg:
-                m = hub.set_forecast_model(msg["set_forecast_model"])
-                await hub.broadcast({"type": "forecast_model", "forecast_model": m})
+                hub.set_forecast_model(msg["set_forecast_model"], msg.get("provider", "claude"))
+                await hub.broadcast({"type": "forecast_model", **hub.forecast_models()})
             elif "set_claude_account" in msg:
                 a = hub.set_claude_account(msg["set_claude_account"])
                 await hub.broadcast({"type": "claude_account", "claude_account": a})

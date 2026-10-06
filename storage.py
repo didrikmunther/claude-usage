@@ -6,8 +6,10 @@ import sqlite3
 import threading
 
 DEFAULT_INTERVAL = 60
-# Default is "adaptive": it beat every other predictor on held-out history.
+# Per provider, each the predictor that scored best on held-out history:
+# "adaptive" on Claude's windows, "analog" on Codex's weekly one.
 DEFAULT_FORECAST_MODEL = "adaptive"
+DEFAULT_FORECAST_MODELS = {"claude": "adaptive", "codex": "analog"}
 # Every day, so the setting changes nothing until it is deliberately narrowed.
 DEFAULT_WORKING_DAYS = "0,1,2,3,4,5,6"
 MIN_INTERVAL = 10
@@ -58,24 +60,29 @@ class Store:
         rows.sort(key=lambda r: r["ts"])
         return rows
 
-    # Which predictor drives every forecast surface. Kept here, not in the
+    # Which predictor drives the forecasts, one per provider: usage patterns
+    # differ enough that the best model differs too. Kept here, not in the
     # browser, because the floating pill runs in a web view with no persistent
     # storage — server-side is the only place both surfaces can read one value.
-    FORECAST_MODELS = ("adaptive", "linear", "cycle", "cycle+tod")
+    FORECAST_MODELS = ("adaptive", "linear", "cycle", "cycle+tod", "analog")
+    # Claude keeps the original key, so an existing choice carries over.
+    _MODEL_KEYS = {"claude": "forecast_model", "codex": "forecast_model_codex"}
 
-    def get_forecast_model(self) -> str:
+    def get_forecast_model(self, provider: str = "claude") -> str:
+        key = self._MODEL_KEYS.get(provider, "forecast_model")
         with self._lock:
-            cur = self._db.execute("SELECT value FROM config WHERE key='forecast_model'")
-            r = cur.fetchone()
-        return r[0] if r and r[0] in self.FORECAST_MODELS else DEFAULT_FORECAST_MODEL
+            r = self._db.execute("SELECT value FROM config WHERE key=?", (key,)).fetchone()
+        if r and r[0] in self.FORECAST_MODELS:
+            return r[0]
+        return DEFAULT_FORECAST_MODELS.get(provider, DEFAULT_FORECAST_MODEL)
 
-    def set_forecast_model(self, model: str) -> str:
-        if model not in self.FORECAST_MODELS:
-            return self.get_forecast_model()
+    def set_forecast_model(self, model: str, provider: str = "claude") -> str:
+        if model not in self.FORECAST_MODELS or provider not in self._MODEL_KEYS:
+            return self.get_forecast_model(provider)
         with self._lock:
             self._db.execute(
-                "INSERT OR REPLACE INTO config (key, value) VALUES ('forecast_model', ?)",
-                (model,))
+                "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+                (self._MODEL_KEYS[provider], model))
             self._db.commit()
         return model
 
