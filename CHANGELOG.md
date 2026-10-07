@@ -2,6 +2,10 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- Usage now picks up again within a minute or two after your connection drops or your Mac wakes up. Before, it could stay frozen for up to half an hour.
+- A single failed update no longer shows an error. You only see one if updates keep failing.
+
 ## [0.18.1] - 2026-10-06
 - Opening the dashboard or the menu-bar panel now shows your latest usage straight away. No more bars sliding in, gauges sweeping, or numbers catching up after a moment.
 

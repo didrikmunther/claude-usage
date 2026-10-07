@@ -130,16 +130,32 @@ def detect_org() -> str:
     )
 
 
+# A connection that has not opened in 5s is not going to: fail fast and retry
+# once, rather than spend the whole poll on it. A dropped or stalled connection
+# is a momentary blip the next attempt clears; waiting for the next poll instead
+# costs a minute of data. Worst case 5 + 3 + 20s, inside the poll's 45s cap.
+CONNECT_TIMEOUT = 5
+READ_TIMEOUT = 15
+RETRY_DELAY = 3
+
+
 def fetch_usage(key: bytes, org: str) -> dict:
     from curl_cffi import requests as creq  # lazy: keeps pure helpers dep-free
     cookies = read_cookies(key)
-    r = creq.get(
-        f"https://claude.ai/api/organizations/{org}/usage",
-        cookies=cookies,
-        headers={"User-Agent": UA, "Accept": "application/json"},
-        impersonate="chrome",
-        timeout=15,
-    )
+    for attempt in (1, 2):
+        try:
+            r = creq.get(
+                f"https://claude.ai/api/organizations/{org}/usage",
+                cookies=cookies,
+                headers={"User-Agent": UA, "Accept": "application/json"},
+                impersonate="chrome",
+                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+            )
+            break
+        except creq.exceptions.ConnectionError:
+            if attempt == 2:
+                raise
+            time.sleep(RETRY_DELAY)
     if r.status_code in (401, 403):
         raise RuntimeError(
             f"claude.ai returned {r.status_code} — session likely expired. "

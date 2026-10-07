@@ -181,6 +181,7 @@ def _bare_hub():
     hub.status = {"state": "starting", "message": None, "ts": None}
     hub.clients = set()
     hub._fail_streak = 0
+    hub._err_streak = {}
     hub._claude_next = 0.0
     hub._claude_streak = 0
     hub._update_next = float("inf")     # don't reach for the release feed
@@ -488,3 +489,88 @@ def test_claude_account_switch_drives_the_menu_bar():
     assert hub._shows_cli()
     hub.claude_account = "desktop"
     assert not hub._shows_cli()
+
+
+# --- recovering from network blips ---
+
+def test_claude_fetch_retries_once_when_the_connection_fails(monkeypatch):
+    import poller
+    from curl_cffi import requests as creq
+
+    calls = []
+
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"five_hour": None}
+
+    def flaky_get(url, **kw):
+        calls.append(kw["timeout"])
+        if len(calls) == 1:
+            raise creq.exceptions.ConnectTimeout("curl: (28) Connection timed out")
+        return _Resp()
+
+    monkeypatch.setattr(poller, "read_cookies", lambda key: {})
+    monkeypatch.setattr(poller, "RETRY_DELAY", 0)
+    monkeypatch.setattr(creq, "get", flaky_get)
+    assert poller.fetch_usage(b"k", "org") == {"five_hour": None}
+    assert len(calls) == 2
+    assert calls[0] == (poller.CONNECT_TIMEOUT, poller.READ_TIMEOUT)
+
+
+def test_claude_fetch_gives_up_after_the_retry(monkeypatch):
+    import poller
+    from curl_cffi import requests as creq
+
+    def dead(url, **kw):
+        raise creq.exceptions.ConnectionError("unreachable")
+
+    monkeypatch.setattr(poller, "read_cookies", lambda key: {})
+    monkeypatch.setattr(poller, "RETRY_DELAY", 0)
+    monkeypatch.setattr(creq, "get", dead)
+    try:
+        poller.fetch_usage(b"k", "org")
+        assert False, "should raise once the retry fails too"
+    except creq.exceptions.ConnectionError:
+        pass
+
+
+def test_a_one_off_failure_stays_quiet_until_it_repeats():
+    import asyncio
+    from server import QUIET_FAILS
+
+    hub = _bare_hub()
+
+    def timeout(ts):
+        raise RuntimeError("Connection timed out")
+
+    hub._fetch_claude = timeout
+    for _ in range(QUIET_FAILS - 1):
+        asyncio.run(hub._poll_once())
+        assert hub.status["state"] == "starting", "a blip must not flash an error"
+    asyncio.run(hub._poll_once())
+    assert hub.status["state"] == "error"
+    assert "timed out" in hub.status["message"]
+
+    # One success clears the count, so the next blip is quiet again.
+    class _Store:
+        def insert(self, row): pass
+    hub.store = _Store()
+    hub._fetch_claude = lambda ts: ({"ts": ts, "fh": 1.0}, {"resets": {}})
+    asyncio.run(hub._poll_once())
+    assert hub.status["state"] == "ok" and hub.status["message"] is None
+    hub._fetch_claude = timeout
+    asyncio.run(hub._poll_once())
+    assert hub.status["state"] == "ok"
+
+
+def test_backoff_after_failures_stays_short():
+    hub = _bare_hub()
+    hub.interval = 60
+    assert hub._next_wait() == 60
+    hub._fail_streak = 1
+    assert hub._next_wait() == 120
+    hub._fail_streak = 9                   # a long outage still retries every 2 min
+    assert hub._next_wait() == 120
+    hub.interval = 300                     # never faster than the chosen interval
+    assert hub._next_wait() == 300

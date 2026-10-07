@@ -32,6 +32,17 @@ DB_PATH = os.path.expanduser("~/.claude-usage/usage.db")
 HOST = os.environ.get("CLAUDE_USAGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "44405"))
 FETCH_TIMEOUT = 45      # hard cap on a single poll; guards against wake-from-sleep hangs
+# After a failed poll, wait a little longer before the next — but only a little.
+# A poll that stores nothing is almost always the network (Wi-Fi drop, sleep),
+# and once it is back the dashboard should be too: doubling up to an hour left
+# it frozen for half an hour after a three-minute blip. Rate limits have their
+# own, longer cooldown (_cooldown_claude).
+FAIL_BACKOFF_MAX = 120
+# A source's error is shown only once it has failed this many polls running. A
+# one-off is retried on the next poll and its last value stays up meanwhile.
+QUIET_FAILS = 3
+# The wall clock running this far ahead of the monotonic one means the Mac slept.
+WAKE_JUMP = 30
 CLAUDE_MIN_INTERVAL = 300  # The CLI's oauth/usage endpoint is tightly (hourly)
                            # rate-limited and shared with Claude Code's own /usage
                            # calls, so poll it gently — the % meter barely moves.
@@ -93,6 +104,7 @@ class Hub:
         self.clients: set[WebSocket] = set()
         self._wake = asyncio.Event()
         self._fail_streak = 0
+        self._err_streak: dict[str, int] = {}   # consecutive failures per source
         # Claude's usage endpoint rate-limits independently of Codex, so it gets
         # its own cooldown: a 429 shouldn't be masked by a Codex success (which
         # would otherwise keep us hammering the limited endpoint every interval).
@@ -238,14 +250,38 @@ class Hub:
                     await self.broadcast({"type": "status", "status": self.status})
                 except Exception:
                     pass
-            wait = self.interval
-            if self._fail_streak:
-                wait = min(MAX_INTERVAL, self.interval * (2 ** min(self._fail_streak, 5)))
+            wait = self._next_wait()
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=wait)
             except asyncio.TimeoutError:
                 pass
             self._wake.clear()
+
+    def _next_wait(self) -> float:
+        if not self._fail_streak:
+            return self.interval
+        backoff = self.interval * (2 ** min(self._fail_streak, 5))
+        return max(self.interval, min(FAIL_BACKOFF_MAX, backoff))
+
+    async def watch_wake(self):
+        """Poll as soon as the Mac wakes. Sleep stops the monotonic clock that
+        asyncio's timers run on, so a pending wait resumes where it left off and
+        the first poll after waking could be minutes late. The wall clock jumping
+        ahead of the monotonic one is how a wake shows."""
+        gap = time.time() - time.monotonic()
+        while True:
+            await asyncio.sleep(5)
+            now_gap = time.time() - time.monotonic()
+            if now_gap - gap > WAKE_JUMP:
+                self._wake.set()
+            gap = now_gap
+
+    def _note_error(self, errs: list, who: str, e: Exception) -> None:
+        """Count a failed fetch; report it once `who` has failed QUIET_FAILS
+        polls in a row (see QUIET_FAILS)."""
+        n = self._err_streak[who] = self._err_streak.get(who, 0) + 1
+        if n >= QUIET_FAILS:
+            errs.append(self._errmsg(who, e))
 
     def _fetch_claude(self, ts):
         if self.claude_src == "cli":
@@ -337,13 +373,14 @@ class Hub:
                     crow, claude_live = res
                     row.update(crow)
                 self._claude_streak = 0
+                self._err_streak.pop("Claude", None)
             except claude_cli.RateLimited as e:
                 errs.append(self._cooldown_claude(e.retry_after))
             except Exception as e:
                 if "429" in str(e):                       # desktop path 429s too
                     errs.append(self._cooldown_claude(0))
                 else:
-                    errs.append(self._errmsg("Claude", e))
+                    self._note_error(errs, "Claude", e)
 
         if self._track_cli():
             try:
@@ -353,8 +390,9 @@ class Hub:
                 if res:
                     krow, claude2_live = res
                     row.update(kh=krow["fh"], kd=krow["sd"])
+                self._err_streak.pop("Claude (terminal)", None)
             except Exception as e:
-                errs.append(self._errmsg("Claude (terminal)", e))
+                self._note_error(errs, "Claude (terminal)", e)
 
         if self.codex_available:
             try:
@@ -362,8 +400,9 @@ class Hub:
                     loop.run_in_executor(self._pool, codex_poller.fetch, ts),
                     timeout=FETCH_TIMEOUT)
                 row.update(xrow)
+                self._err_streak.pop("Codex", None)
             except Exception as e:
-                errs.append(self._errmsg("Codex", e))
+                self._note_error(errs, "Codex", e)
 
         row["ts"] = ts                            # single timestamp for the combined row
         stored = False
@@ -391,9 +430,12 @@ class Hub:
                                   "codex": codex_live, "status": self.status})
         else:
             self._fail_streak += 1
-            self.status = {"state": "error", "message": "; ".join(errs) or "poll failed",
-                           "ts": poller.now_ms()}
-            await self.broadcast({"type": "status", "status": self.status})
+            # Only quiet one-offs failed (nothing reported yet): leave the last
+            # status up rather than flash an error the next poll will clear.
+            if errs or not any(self._err_streak.values()):
+                self.status = {"state": "error", "message": "; ".join(errs) or "poll failed",
+                               "ts": poller.now_ms()}
+                await self.broadcast({"type": "status", "status": self.status})
 
         if self.cc_available:
             try:
@@ -434,6 +476,7 @@ hub = Hub()
 async def _startup():
     hub.start()
     asyncio.create_task(hub.loop())
+    asyncio.create_task(hub.watch_wake())
 
 
 NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
