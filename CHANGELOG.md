@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.18.2] - 2026-10-07
 - Usage now picks up again within a minute or two after your connection drops or your Mac wakes up. Before, it could stay frozen for up to half an hour.
 - A single failed update no longer shows an error. You only see one if updates keep failing.
 
