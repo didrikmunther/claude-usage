@@ -31,6 +31,12 @@ STATIC = os.path.join(HERE, "static")
 DB_PATH = os.path.expanduser("~/.claude-usage/usage.db")
 HOST = os.environ.get("CLAUDE_USAGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "44405"))
+# The page gets all history on open, but only the last week at full detail;
+# older samples arrive as one per 10 minutes, which covers ~2 months in fewer
+# points than a fortnight at full detail. Zooming in fetches the full stretch.
+HISTORY_FULL_DAYS = 7
+HISTORY_BUCKET_MS = 10 * 60 * 1000
+HISTORY_DETAIL_MAX = 20000
 FETCH_TIMEOUT = 45      # hard cap on a single poll; guards against wake-from-sleep hangs
 # After a failed poll, wait a little longer before the next — but only a little.
 # A poll that stores nothing is almost always the network (Wi-Fi drop, sleep),
@@ -545,17 +551,23 @@ async def api_check_update():
 
 
 @app.get("/api/history")
-async def api_history(since: int | None = None):
-    return JSONResponse({"history": hub.store.history(since_ms=since)})
+async def api_history(since: int | None = None, until: int | None = None):
+    # A bounded range is the dashboard asking for full detail of a stretch it
+    # holds only thinned (see history_overview); cap it so one ask stays small.
+    limit = HISTORY_DETAIL_MAX if until is not None else 20000
+    return JSONResponse({"history": hub.store.history(since_ms=since, until_ms=until,
+                                                      limit=limit)})
 
 
 @app.websocket("/ws")
 async def ws(sock: WebSocket):
     await sock.accept()
     hub.clients.add(sock)
+    full_since = poller.now_ms() - HISTORY_FULL_DAYS * 86400 * 1000
     await sock.send_json({
         "type": "init",
-        "history": hub.store.history(),
+        "history": hub.store.history_overview(full_since, HISTORY_BUCKET_MS),
+        "history_full_since": full_since,
         "claude": hub.latest,
         "claude2": hub.claude2_latest,
         "codex": hub.codex_latest,

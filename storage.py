@@ -47,18 +47,37 @@ class Store:
             )
             self._db.commit()
 
-    def history(self, since_ms: int | None = None, limit: int = 20000) -> list[dict]:
+    def history(self, since_ms: int | None = None, limit: int = 20000,
+                until_ms: int | None = None) -> list[dict]:
         cols = ", ".join(self.COLS)
         with self._lock:
             if since_ms is not None:
                 cur = self._db.execute(
-                    f"SELECT {cols} FROM samples WHERE ts >= ? ORDER BY ts", (since_ms,))
+                    f"SELECT {cols} FROM samples WHERE ts >= ? AND ts <= ? "
+                    f"ORDER BY ts LIMIT ?",
+                    (since_ms, until_ms if until_ms is not None else 2**62, limit))
             else:
                 cur = self._db.execute(
                     f"SELECT {cols} FROM samples ORDER BY ts DESC LIMIT ?", (limit,))
             rows = [dict(zip(self.COLS, r)) for r in cur.fetchall()]
         rows.sort(key=lambda r: r["ts"])
         return rows
+
+    def history_overview(self, full_since_ms: int, bucket_ms: int) -> list[dict]:
+        """All history in a size that loads fast: every sample from
+        `full_since_ms` on, and before that the last sample of each `bucket_ms`
+        slot. The dashboard fetches full detail for an older stretch when you
+        zoom into it (history(since_ms, until_ms=...))."""
+        cols = ", ".join(self.COLS)
+        older = ", ".join(["MAX(ts) AS ts"] + [c for c in self.COLS if c != "ts"])
+        with self._lock:
+            # SQLite takes the bare columns from the row that holds MAX(ts),
+            # i.e. each slot's last sample.
+            cur = self._db.execute(
+                f"SELECT {cols} FROM (SELECT {older} FROM samples WHERE ts < ? "
+                f"GROUP BY ts / ?) UNION ALL SELECT {cols} FROM samples WHERE ts >= ? "
+                f"ORDER BY ts", (full_since_ms, bucket_ms, full_since_ms))
+            return [dict(zip(self.COLS, r)) for r in cur.fetchall()]
 
     # Which predictor drives the forecasts, one per provider: usage patterns
     # differ enough that the best model differs too. Kept here, not in the

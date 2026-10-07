@@ -2,6 +2,10 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- Each chart now has a small overview strip underneath showing all your history and the forecast. Drag the highlighted window to look back in time or further ahead (up to a week), drag its edges to zoom, or click anywhere on the strip to jump there. The 24h, Week and Full buttons snap back to the usual views.
+- Charts now go all the way back to when you started tracking, not just the last two weeks, and still open just as fast. Stop on an older stretch for a moment and it fills in with full detail.
+
 ## [0.18.2] - 2026-10-07
 - Usage now picks up again within a minute or two after your connection drops or your Mac wakes up. Before, it could stay frozen for up to half an hour.
 - A single failed update no longer shows an error. You only see one if updates keep failing.

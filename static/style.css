@@ -226,6 +226,13 @@ table.acc-tbl tr.active td:first-child::after { content: " · in use"; color: va
 .swatch.fh { background: var(--fh); } .swatch.sd { background: var(--sd); }
 .swatch.cx1 { background: var(--cx1); } .swatch.cx2 { background: var(--cx2); }
 #chart { width: 100%; }
+/* overview strip: all history + forecast, with the main chart's window on it */
+.chart-ov { width: 100%; margin-top: 4px; user-select: none; touch-action: none; --ov-dim: rgba(255, 255, 255, .72); }
+.chart-ov .u-over { overflow: hidden; }
+.ov-win { position: absolute; top: 0; bottom: 0; box-sizing: border-box;
+  border: 1px solid var(--muted); border-radius: 4px; pointer-events: none;
+  box-shadow: 0 0 0 9999px var(--ov-dim); }
+@media (prefers-color-scheme: dark) { .chart-ov { --ov-dim: rgba(21, 24, 33, .72); } }
 
 .prog-card { padding: 14px 16px; margin-bottom: 24px; }
 .prog-head { font-size: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }

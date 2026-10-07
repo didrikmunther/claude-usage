@@ -574,3 +574,26 @@ def test_backoff_after_failures_stays_short():
     assert hub._next_wait() == 120
     hub.interval = 300                     # never faster than the chosen interval
     assert hub._next_wait() == 300
+
+
+def test_history_overview_thins_only_the_older_part():
+    with tempfile.TemporaryDirectory() as d:
+        s = Store(os.path.join(d, "u.db"))
+        for i in range(120):                       # a sample a minute for two hours
+            s.insert({"ts": i * 60_000, "fh": float(i)})
+        rows = s.history_overview(full_since_ms=60 * 60_000, bucket_ms=10 * 60_000)
+        older = [r for r in rows if r["ts"] < 60 * 60_000]
+        assert len(older) == 6                     # first hour: one per 10 minutes...
+        assert [r["fh"] for r in older] == [9.0, 19.0, 29.0, 39.0, 49.0, 59.0]   # ...each slot's last
+        assert len(rows) - len(older) == 60        # last hour untouched
+        assert [r["ts"] for r in rows] == sorted(r["ts"] for r in rows)
+
+
+def test_history_range_returns_the_full_detail_between_bounds():
+    with tempfile.TemporaryDirectory() as d:
+        s = Store(os.path.join(d, "u.db"))
+        for i in range(120):
+            s.insert({"ts": i * 60_000, "fh": float(i)})
+        rows = s.history(since_ms=10 * 60_000, until_ms=20 * 60_000)
+        assert [r["fh"] for r in rows] == [float(i) for i in range(10, 21)]
+        assert len(s.history(since_ms=0, until_ms=10**12, limit=5)) == 5

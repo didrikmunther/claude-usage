@@ -11,7 +11,9 @@ const CLAUDES = [C, K];
 const X = { chart: null, data: [[], [], []], last: null, shown: false };
 
 let bounds = { min: 10, max: 3600 };
-const MAX_POINTS = 20000;
+// Generous: history arrives thinned (see loadDetail), but zooming in merges
+// full-detail stretches back in, and new samples keep arriving.
+const MAX_POINTS = 100000;
 
 const RANGES = { "24h": 24 * 3600, "7d": 7 * 24 * 3600, full: Infinity };
 // Claude and Codex each keep their own range and forecast model: C and K are
@@ -202,12 +204,51 @@ function fmtAxis(u, splits) {
   });
 }
 
-// Show only the slice within the selected range (measured back from newest sample).
+// What the chart shows is a window onto history + forecast, kept relative to
+// the newest sample so it slides along as samples arrive. A range button sets
+// it to a preset (with a third of the history span ahead, as before); dragging
+// the overview strip under the chart sets it to anything else.
+const AHEAD_MAX = 7 * 86400;    // forecast computed this far; beyond, it is guesswork
+const VIEW_MIN = 3600;          // narrowest window the overview lets you drag to
+const views = { claude: null, codex: null };   // null = the preset; else {back, ahead} in sec
+
+// The panel's first real sample. The three panels share one timeline, so the
+// CLI's rows before it was signed in are all null — not history to show.
+function firstReal(st) {
+  const [ts, a, b] = st.data;
+  for (let i = 0; i < ts.length; i++) if (a[i] != null || b[i] != null) return ts[i];
+  return ts.length ? ts[ts.length - 1] : null;
+}
+
+function viewOf(st) {
+  const ts = st.data[0];
+  if (!ts.length) return null;
+  const now = ts[ts.length - 1], first = firstReal(st);
+  const v = views[provOf(st)];
+  if (v) return { min: Math.max(first, now - v.back), max: now + v.ahead };
+  const back = Math.min(RANGES[ranges[provOf(st)]], now - first);
+  return { min: now - back, max: now + Math.min(AHEAD_MAX, back / 3) };
+}
+
+// Recompute history + forecast and draw it, at the current view.
 function applyRange(st) {
   if (!st.chart) return;
-  const secs = RANGES[ranges[provOf(st)]];
-  let ts = st.data[0], a = st.data[1], b = st.data[2];
-  st.chart.setData(withProjection(ts, a, b, panelResets(st), secs, modelOf(st)));
+  const data = withProjection(st.data[0], st.data[1], st.data[2], panelResets(st), modelOf(st));
+  st.chart.setData(data, false);
+  if (st.ov) {
+    st.ov.setData(data, false);
+    const ts = data[0];
+    if (ts.length) st.ov.setScale("x", { min: firstReal(st), max: ts[ts.length - 1] });
+  }
+  applyView(st);
+}
+
+// Move the view without recomputing anything: cheap enough to run per drag event.
+function applyView(st) {
+  const v = viewOf(st);
+  if (!v || !st.chart) return;
+  st.chart.setScale("x", { min: v.min, max: v.max });
+  paintWindow(st);
 }
 
 function toSamples(ts, ys) {
@@ -253,23 +294,17 @@ function panelResets(st) {
 // is the visible window (Infinity = full). The model always trains on the FULL
 // history — the range only controls how much history is shown and how far ahead
 // the forecast is drawn — so the prediction is stable across range switches.
-function withProjection(tsFull, aFull, bFull, rst, rangeSecs, model) {
+function withProjection(tsFull, aFull, bFull, rst, model) {
   const nFull = tsFull.length;
   const now = nFull ? tsFull[nFull - 1] : 0;
-  // Slice for DISPLAY only.
-  let start = 0;
-  if (rangeSecs !== Infinity && nFull) {
-    const cutoff = now - rangeSecs;
-    while (start < nFull && tsFull[start] < cutoff) start++;
-  }
-  const ts = tsFull.slice(start), a = aFull.slice(start), b = bFull.slice(start);
+  // The whole history goes to the chart; the x scale picks what is shown.
+  const ts = tsFull, a = aFull, b = bFull;
   const n = ts.length;
   const nul = () => ts.map(() => null);
   // rows: ts, realA, realB, projA, projB, loA, loB, hiA, hiB
   const noProj = [ts.slice(), a.slice(), b.slice(), nul(), nul(), nul(), nul(), nul(), nul()];
   if (nFull < 2 || n < 1) return noProj;
-  const horizon = (now - ts[0]) / 3;   // future region = 25% of the visible width
-  if (!(horizon > 0)) return noProj;
+  const horizon = AHEAD_MAX;
   // Fixed hourly step (not tied to the range) so the forecast resolution — and
   // thus the overlapping trajectory — is identical whatever range is selected.
   const step = 3600;
@@ -317,23 +352,21 @@ function applyRangeAll() { applyRange(C); applyRange(K); applyRange(X); renderCo
 // Percentage units consumed within the visible range = sum of positive
 // step-to-step increments per series (resets/decreases don't count).
 function consumedInRange(st) {
-  const secs = RANGES[ranges[provOf(st)]];
   const ts = st.data[0];
+  const v = viewOf(st);
   let i = 0;
-  if (secs !== Infinity && ts.length) {
-    const cutoff = ts[ts.length - 1] - secs;
-    while (i < ts.length && ts[i] < cutoff) i++;
-  }
+  if (v) while (i < ts.length && ts[i] < v.min) i++;
+  const end = v ? v.max : Infinity;
   const out = [];
   for (let s = 1; s <= 2; s++) {
     const y = st.data[s];
     let sum = 0, prev = null, n = 0;
-    for (let k = i; k < y.length; k++) {
-      const v = y[k];
-      if (v == null) continue;
+    for (let k = i; k < y.length && ts[k] <= end; k++) {
+      const val = y[k];
+      if (val == null) continue;
       n++;
-      if (prev != null && v > prev) sum += v - prev;
-      prev = v;
+      if (prev != null && val > prev) sum += val - prev;
+      prev = val;
     }
     out.push({ sum, n });
   }
@@ -692,18 +725,183 @@ function wireControls() {
 }
 
 // One range per provider; both Claude columns (desktop + CLI) share Claude's.
+// A dragged window lights no preset; clicking one snaps back to it.
+function paintRange() {
+  document.querySelectorAll('.seg[data-sync="range"]').forEach((g) =>
+    g.querySelectorAll("button").forEach((b) =>
+      b.classList.toggle("on", !views[g.dataset.p] && b.dataset.r === ranges[g.dataset.p])));
+}
+
 function wireRange() {
-  const groups = [...document.querySelectorAll('.seg[data-sync="range"]')];
-  const setActive = () => groups.forEach((g) =>
-    g.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.r === ranges[g.dataset.p])));
-  setActive();
-  groups.forEach((g) => g.querySelectorAll("button").forEach((b) =>
-    b.addEventListener("click", () => {
+  paintRange();
+  document.querySelectorAll('.seg[data-sync="range"]').forEach((g) =>
+    g.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
       const p = g.dataset.p;
       ranges[p] = b.dataset.r;
+      views[p] = null;
       try { localStorage.setItem(RANGE_KEYS[p], ranges[p]); } catch {}
-      setActive(); applyRangeAll();
+      paintRange();
+      for (const st of [C, K, X]) if (provOf(st) === p) applyView(st);
+      renderConsumed();
     })));
+}
+
+// ---- detail on demand ----
+// The page opens with history older than a week thinned to one point per 10
+// minutes — plenty zoomed out, coarse up close. Hold the chart on such a
+// stretch for DWELL_MS and it fills in at full detail.
+const DWELL_MS = 300;
+const DETAIL_MAX_SPAN = 7 * 86400;   // wider than this, 10-minute points already outnumber pixels
+let fullSince = -Infinity;           // sec; samples from here on arrived at full detail
+const detailed = [];                 // [from, to] stretches already fetched at full detail
+let dwellTimer = null;
+
+function scheduleDetail(st) {
+  clearTimeout(dwellTimer);
+  dwellTimer = setTimeout(() => loadDetail(st), DWELL_MS);
+}
+
+async function loadDetail(st) {
+  const v = viewOf(st);
+  if (!v || v.max - v.min > DETAIL_MAX_SPAN) return;
+  const pad = (v.max - v.min) / 4;             // a little either side, so a nudge needs no refetch
+  const from = v.min - pad, to = Math.min(v.max + pad, fullSince);
+  if (to <= from) return;                      // all inside the full-detail week
+  if (detailed.some(([a, b]) => a <= from && b >= to)) return;
+  try {
+    const url = `/api/history?since=${Math.floor(from * 1000)}&until=${Math.ceil(to * 1000)}`;
+    const r = await (await fetch(url)).json();
+    detailed.push([from, to]);
+    if (r.history && r.history.length) { mergeHistory(r.history); applyRangeAll(); }
+  } catch { /* stay at the thinned detail; the next dwell retries */ }
+}
+
+// Fold fetched rows into every panel's series, in time order, replacing any
+// sample already held at the same instant.
+function mergeHistory(rows) {
+  for (const [st, ka, kb] of [[C, "fh", "sd"], [K, "kh", "kd"], [X, "cp", "cs"]]) {
+    const [t0, a0, b0] = st.data, t = [], ya = [], yb = [];
+    let i = 0, j = 0;
+    while (i < t0.length || j < rows.length) {
+      const rt = j < rows.length ? rows[j].ts / 1000 : Infinity;
+      if (i < t0.length && t0[i] < rt) { t.push(t0[i]); ya.push(a0[i]); yb.push(b0[i]); i++; continue; }
+      if (i < t0.length && t0[i] === rt) i++;
+      t.push(rt); ya.push(rows[j][ka]); yb.push(rows[j][kb]); j++;
+    }
+    st.data = [t, ya, yb];
+  }
+}
+
+// ---- overview strip ----
+// A small chart of all history plus the forecast under each main chart, with
+// a highlighted window marking what the main chart shows. Drag the window to
+// move through time, drag its edges to zoom, click outside it to jump there.
+const OV_HEIGHT = 56;
+
+function makeOverview(elId, series) {
+  const el = $(elId);
+  if (!el) return null;
+  const line = (s, dim) => ({ stroke: css(dim ? s.color + "-dim" : s.color), width: 1,
+    points: { show: false }, show: s.show !== false });
+  const off = () => ({ show: false });
+  const opts = {
+    width: el.clientWidth || 640, height: OV_HEIGHT,
+    padding: [4, 8, 0, 38],                         // line up with the main chart's y axis
+    cursor: { show: false, drag: { x: false, y: false } },
+    legend: { show: false },
+    plugins: [nowDivider()],
+    scales: { y: { range: [0, 100] } },
+    axes: [
+      { grid: { show: false }, ticks: { show: false }, size: 18, values: fmtAxis,
+        stroke: css("--muted"), font: "10px -apple-system, system-ui, sans-serif" },
+      { show: false },
+    ],
+    series: [{}, ...series.map((s) => line(s)), ...series.map((s) => line(s, true)),
+      ...series.map(off), ...series.map(off)],
+  };
+  const empty = [[], ...opts.series.slice(1).map(() => [])];
+  return new uPlot(opts, empty, el);
+}
+
+function paintWindow(st) {
+  const u = st.ov, v = viewOf(st);
+  if (!u || !st.ovWin) return;
+  st.ovWin.hidden = !v;
+  if (!v) return;
+  const l = u.valToPos(v.min, "x"), r = u.valToPos(v.max, "x");
+  st.ovWin.style.left = l + "px";
+  st.ovWin.style.width = Math.max(2, r - l) + "px";
+}
+
+// Set the provider's window to [min, max], kept inside history + forecast.
+function setView(st, min, max, kind) {
+  const ts = st.data[0];
+  if (!ts.length) return;
+  const now = ts[ts.length - 1], lo = firstReal(st), hi = now + AHEAD_MAX;
+  if (kind === "move") {                            // keep the width, stop at the ends
+    const w = Math.min(max - min, hi - lo);
+    if (min < lo) { min = lo; max = lo + w; }
+    if (max > hi) { max = hi; min = hi - w; }
+  } else {
+    min = Math.max(lo, min); max = Math.min(hi, max);
+    if (max - min < VIEW_MIN) {
+      if (kind === "l") min = max - VIEW_MIN; else max = min + VIEW_MIN;
+    }
+  }
+  const p = provOf(st);
+  views[p] = { back: now - min, ahead: max - now };
+  paintRange();
+  for (const s of [C, K, X]) if (provOf(s) === p) applyView(s);
+  renderConsumed();
+  scheduleDetail(st);
+}
+
+function attachNavigator(st) {
+  const u = st.ov;
+  if (!u) return;
+  const win = document.createElement("div");
+  win.className = "ov-win";
+  u.over.appendChild(win);
+  st.ovWin = win;
+  const EDGE = 6;                                   // px either side of an edge that grabs it
+  const xAt = (e) => e.clientX - u.over.getBoundingClientRect().left;
+  const hit = (x) => {
+    const v = viewOf(st);
+    if (!v) return null;
+    const l = u.valToPos(v.min, "x"), r = u.valToPos(v.max, "x");
+    if (Math.abs(x - l) <= EDGE) return "l";
+    if (Math.abs(x - r) <= EDGE) return "r";
+    return x > l && x < r ? "move" : "jump";
+  };
+  const CURSOR = { l: "ew-resize", r: "ew-resize", move: "grab", jump: "pointer" };
+  let drag = null;
+  u.over.addEventListener("pointerdown", (e) => {
+    const x = xAt(e), kind = hit(x);
+    if (!kind) return;
+    let { min, max } = viewOf(st);
+    if (kind === "jump") {                          // centre the window here, then drag it
+      const c = u.posToVal(x, "x"), half = (max - min) / 2;
+      min = c - half; max = c + half;
+      setView(st, min, max, "move");
+      ({ min, max } = viewOf(st));
+    }
+    drag = { kind: kind === "jump" ? "move" : kind, t0: u.posToVal(x, "x"), min, max };
+    u.over.setPointerCapture(e.pointerId);
+    u.over.style.cursor = drag.kind === "move" ? "grabbing" : "ew-resize";
+    e.preventDefault();
+  });
+  u.over.addEventListener("pointermove", (e) => {
+    if (!drag) { u.over.style.cursor = CURSOR[hit(xAt(e))] || ""; return; }
+    const dt = u.posToVal(xAt(e), "x") - drag.t0;
+    let { min, max } = drag;
+    if (drag.kind === "l") min += dt;
+    else if (drag.kind === "r") max += dt;
+    else { min += dt; max += dt; }
+    setView(st, min, max, drag.kind);
+  });
+  const end = () => { drag = null; u.over.style.cursor = ""; };
+  u.over.addEventListener("pointerup", end);
+  u.over.addEventListener("pointercancel", end);
 }
 
 // One model per provider, kept in step across that provider's panels.
@@ -1048,6 +1246,8 @@ function connect() {
       if (m.claude_account) { acct = m.claude_account; paintAcct(); }
       if (m.working_days != null) setWorkingDays(m.working_days);
       loadHistory(m.history || []);
+      fullSince = m.history_full_since != null ? m.history_full_since / 1000 : -Infinity;
+      detailed.length = 0;
       if (m.claude) renderClaude(C, m.claude);
       if (m.claude2) renderClaude(K, m.claude2);
       if (m.codex) renderCodex(m.codex);
@@ -1413,12 +1613,13 @@ function tick() {
 
 // ---- boot ----
 // Keep each uPlot sized to its container through reveals / layout changes / resizes.
-function observeSize(elId, getChart) {
+function observeSize(elId, getChart, height = 240, after = null) {
   const el = $(elId);
+  if (!el) return;
   const ro = new ResizeObserver(() => {
     const w = el.clientWidth;
     const chart = getChart();
-    if (w > 0 && chart) chart.setSize({ width: w, height: 240 });
+    if (w > 0 && chart) { chart.setSize({ width: w, height }); if (after) after(); }
   });
   ro.observe(el);
 }
@@ -1446,6 +1647,15 @@ window.addEventListener("load", () => {
     [nowDivider()]);
   observeSize("chart", () => C.chart);
   observeSize("cxChart", () => X.chart);
+  for (const [st, id, series] of [
+    [C, "chartOv", [{ color: "--fh" }, { color: "--sd" }]],
+    [K, "k_chartOv", [{ color: "--fh" }, { color: "--sd" }]],
+    [X, "cxChartOv", [{ color: "--cx1", show: false }, { color: "--cx2" }]],
+  ]) {
+    st.ov = makeOverview(id, series);
+    attachNavigator(st);
+    observeSize(id, () => st.ov, OV_HEIGHT, () => paintWindow(st));
+  }
   wireControls();
   wireAcct();
   wireScope();
