@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.19.1] - 2026-10-08
 - Opening the dashboard after a long break (say, after your Mac was asleep) now fetches fresh usage straight away. You no longer see a "no new samples" warning first, or the charts and bars catching up step by step.
 - Double-clicking a chart to reset the zoom now moves the overview strip's window back too. Dragging across a chart to zoom also moves it.
 
