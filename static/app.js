@@ -120,9 +120,12 @@ function makeChart(elId, series, plugins) {
   const opts = {
     width: el.clientWidth || 640, height: 240,
     padding: [8, 8, 0, 0],
-    cursor: { y: false },
+    // Drag-to-zoom and double-click-to-reset go through the provider's view
+    // (see zoomToView), so the overview window moves with them.
+    cursor: { y: false, drag: { x: true, y: false, setScale: false },
+      bind: { dblclick: (u) => () => resetView(provOf(stOf(u))) } },
     legend: { show: false },
-    plugins: [cursorTime(), ...(plugins || [])],
+    plugins: [cursorTime(), zoomToView(), ...(plugins || [])],
     scales: { y: { range: [0, 100] } },
     axes: [
       { grid: { show: false }, ticks: { show: false }, size: 34, values: fmtAxis,
@@ -135,6 +138,18 @@ function makeChart(elId, series, plugins) {
   };
   const empty = [[], ...real.map(() => []), ...proj.map(() => []), ...lo.map(() => []), ...hi.map(() => [])];
   return new uPlot(opts, empty, el);
+}
+
+const stOf = (u) => [C, K, X].find((st) => st.chart === u);
+
+// A drag across the main chart sets the view to the dragged span, the same as
+// dragging the overview window's edges.
+function zoomToView() {
+  return { hooks: { setSelect: (u) => {
+    const { left, width } = u.select;
+    if (width > 2) setView(stOf(u), u.posToVal(left, "x"), u.posToVal(left + width, "x"));
+    u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+  } } };
 }
 
 // Timestamp readout following the cursor. uPlot already tracks the hovered index;
@@ -738,12 +753,17 @@ function wireRange() {
     g.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
       const p = g.dataset.p;
       ranges[p] = b.dataset.r;
-      views[p] = null;
       try { localStorage.setItem(RANGE_KEYS[p], ranges[p]); } catch {}
-      paintRange();
-      for (const st of [C, K, X]) if (provOf(st) === p) applyView(st);
-      renderConsumed();
+      resetView(p);
     })));
+}
+
+// Back to the provider's preset range: a range button, or a double-click on the chart.
+function resetView(p) {
+  views[p] = null;
+  paintRange();
+  for (const st of [C, K, X]) if (provOf(st) === p) applyView(st);
+  renderConsumed();
 }
 
 // ---- detail on demand ----
@@ -1265,10 +1285,17 @@ function connect() {
       snapGauges();
       scoreForecasts();
       reveal();
+      refreshIfBehind();                    // e.g. reconnected after the Mac slept
     } else if (m.type === "sample") {
+      // A refresh landing, or the backlog a paused page drains on waking: put it
+      // up as it stands rather than animate through each step.
+      const quiet = refreshUntil || Date.now() - sampleTs(m) > CATCHUP_AGE_MS;
+      if (quiet) quietly();
+      refreshUntil = 0;
       if (m.claude) { pushPoint(C, m.claude.ts / 1000, m.claude.fh, m.claude.sd); renderClaude(C, m.claude); }
       if (m.claude2) { pushPoint(K, m.claude2.ts / 1000, m.claude2.fh, m.claude2.sd); renderClaude(K, m.claude2); }
       if (m.codex) { pushPoint(X, m.codex.ts / 1000, m.codex.cp, m.codex.cs); renderCodex(m.codex); }
+      if (quiet) { updateGauges(); snapGauges(); }
       setStatus(m.status);
     } else if (m.type === "cc") {
       renderCC(m.cc);
@@ -1277,6 +1304,7 @@ function connect() {
     } else if (m.type === "update") {
       renderUpdate(m.update);
     } else if (m.type === "status") {
+      if (m.status && m.status.state === "error") refreshUntil = 0;   // let the stale bar speak
       setStatus(m.status);
     } else if (m.type === "changelog") {
       // acknowledged in another tab (or the menu-bar popover): close here too
@@ -1484,14 +1512,42 @@ async function resync() {
     applyRangeAll();
   } catch { /* server unreachable: then the stale bar is telling the truth */ }
   resyncing = false;
+  refreshIfBehind();
   checkStale();
+}
+
+// After a sleep the poller was paused too, so even a resync can leave the newest
+// sample hours old. Ask for a poll now and wait for it quietly, instead of
+// warning about a dead poller and then catching up in steps.
+const REFRESH_WAIT_MS = 60e3;   // the server caps a poll at 45s; past this the stale bar speaks
+const CATCHUP_AGE_MS = 30e3;    // a sample older than this on arrival was buffered, not live
+let refreshUntil = 0;           // a poll asked for is in flight until a sample lands or this passes
+const sampleTs = (m) => Math.max(...[m.claude, m.claude2, m.codex].map((x) => (x && x.ts) || 0));
+
+function refreshIfBehind() {
+  const newest = newestSampleMs();
+  const poll = Number($("ivalNum") && $("ivalNum").value) || 60;
+  if (!newest || Date.now() - newest <= (poll + 15) * 1000) return;
+  if (Date.now() < refreshUntil || !(ws && ws.readyState === 1)) return;   // reconnect's init retries
+  ws.send(JSON.stringify({ poll_now: true }));
+  refreshUntil = Date.now() + REFRESH_WAIT_MS;
+  $("updated").textContent = "refreshing…";
+}
+
+// Transitions off until things settle: each buffered message renders in its own
+// task, so one animation frame is not enough to cover them all.
+let quietTimer = null;
+function quietly() {
+  document.body.classList.add("still");
+  clearTimeout(quietTimer);
+  quietTimer = setTimeout(() => document.body.classList.remove("still"), 400);
 }
 
 function checkStale() {
   const el = $("stale");
   if (!el) return;
   const newest = newestSampleMs();
-  if (!newest || resyncing) { el.hidden = true; return; }
+  if (!newest || resyncing || Date.now() < refreshUntil) { el.hidden = true; return; }
   const poll = Number($("ivalNum") && $("ivalNum").value) || 60;
   const limit = Math.max(STALE_FLOOR_SEC, poll * STALE_MISSED_POLLS) * 1000;
   const age = Date.now() - newest;

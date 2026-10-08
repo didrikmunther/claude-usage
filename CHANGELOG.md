@@ -2,6 +2,10 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- Opening the dashboard after a long break (say, after your Mac was asleep) now fetches fresh usage straight away. You no longer see a "no new samples" warning first, or the charts and bars catching up step by step.
+- Double-clicking a chart to reset the zoom now moves the overview strip's window back too. Dragging across a chart to zoom also moves it.
+
 ## [0.19.0] - 2026-10-07
 - Each chart now has a small overview strip underneath showing all your history and the forecast. Drag the highlighted window to look back in time or further ahead (up to a week), drag its edges to zoom, or click anywhere on the strip to jump there. The 24h, Week and Full buttons snap back to the usual views.
 - Charts now go all the way back to when you started tracking, not just the last two weeks, and still open just as fast. Stop on an older stretch for a moment and it fills in with full detail.
