@@ -58,21 +58,10 @@ class Store:
                 self._db.execute("INSERT OR REPLACE INTO offline VALUES (?, ?)", (ts, ts))
             self._db.commit()
 
-    # What the charts show. A missed poll or two is noise, not an outage worth a
-    # stripe; outages a few minutes apart are one as far as the eye is concerned.
-    OFFLINE_SHOW_GAP_MS = 5 * 60 * 1000     # closer than this: drawn as one
-    OFFLINE_SHOW_MIN_MS = 5 * 60 * 1000     # shorter than this: not drawn
-
     def offline_spans(self) -> list[list[int]]:
         with self._lock:
-            rows = self._db.execute("SELECT start, end FROM offline ORDER BY start").fetchall()
-        merged: list[list[int]] = []
-        for a, b in rows:
-            if merged and a - merged[-1][1] < self.OFFLINE_SHOW_GAP_MS:
-                merged[-1][1] = max(merged[-1][1], b)
-            else:
-                merged.append([a, b])
-        return [m for m in merged if m[1] - m[0] >= self.OFFLINE_SHOW_MIN_MS]
+            return [list(r) for r in self._db.execute(
+                "SELECT start, end FROM offline ORDER BY start")]
 
     def _backfill_offline(self) -> None:
         """Before outages were recorded, an outage left rows where the desktop app
