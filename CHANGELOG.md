@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.20.2] - 2026-10-11
 - Short connection blips show on the charts again, as in 0.20.0. Every time the connection dropped is shaded, however brief.
 
 ## [0.20.1] - 2026-10-11
