@@ -125,7 +125,7 @@ function makeChart(elId, series, plugins) {
     cursor: { y: false, drag: { x: true, y: false, setScale: false },
       bind: { dblclick: (u) => () => resetView(provOf(stOf(u))) } },
     legend: { show: false },
-    plugins: [cursorTime(), zoomToView(), ...(plugins || [])],
+    plugins: [cursorTime(), zoomToView(), offlineBands(true), ...(plugins || [])],
     scales: { y: { range: [0, 100] } },
     axes: [
       { grid: { show: false }, ticks: { show: false }, size: 34, values: fmtAxis,
@@ -176,10 +176,51 @@ function cursorTime() {
         const v = u.data[j][i] ?? u.data[j + N][i];
         if (v != null) parts.push(`${u.series[j].label} ${Math.round(v)}%`);
       }
+      if (offlineAt(u.posToVal(u.cursor.left, "x"))) parts.push("offline");
       el.textContent = parts.join(" · ");
       el.style.left = Math.max(0, Math.min(u.over.clientWidth, u.cursor.left)) + "px";
     },
   } };
+}
+
+// Stretches with no internet, as the server recorded them: [start, end] in sec.
+// Shaded under the lines so a gap reads as "offline" rather than as missing data.
+let offline = [];
+const OFFLINE_LABEL_PX = 48;            // narrower than this, the band goes unlabelled
+
+function setOffline(spans) {
+  offline = (spans || []).map(([a, b]) => [a / 1000, b / 1000]);
+  for (const st of [C, K, X]) {
+    if (st.chart) st.chart.redraw(false);
+    if (st.ov) st.ov.redraw(false);
+  }
+}
+
+const offlineAt = (t) => offline.some(([a, b]) => t >= a && t <= b);
+
+function offlineBands(label) {
+  return { hooks: { drawAxes: (u) => {
+    if (!offline.length) return;
+    const { left, top, width, height } = u.bbox;
+    const ctx = u.ctx;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(left, top, width, height); ctx.clip();
+    ctx.fillStyle = css("--offline");
+    for (const [a, b] of offline) {
+      const x0 = u.valToPos(a, "x", true), x1 = u.valToPos(b, "x", true);
+      if (x1 < left || x0 > left + width) continue;
+      const w = Math.max(2 * devicePixelRatio, x1 - x0);
+      ctx.fillRect(x0, top, w, height);
+      if (label && w >= OFFLINE_LABEL_PX * devicePixelRatio) {
+        ctx.fillStyle = css("--muted");
+        ctx.font = `${11 * devicePixelRatio}px -apple-system, system-ui, sans-serif`;
+        ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText("offline", x0 + w / 2, top + 4 * devicePixelRatio);
+        ctx.fillStyle = css("--offline");
+      }
+    }
+    ctx.restore();
+  } } };
 }
 
 // Faint dashed vertical line marking "now" — the boundary between history and the
@@ -829,7 +870,7 @@ function makeOverview(elId, series) {
     padding: [4, 8, 0, 38],                         // line up with the main chart's y axis
     cursor: { show: false, drag: { x: false, y: false } },
     legend: { show: false },
-    plugins: [nowDivider()],
+    plugins: [offlineBands(false), nowDivider()],
     scales: { y: { range: [0, 100] } },
     axes: [
       { grid: { show: false }, ticks: { show: false }, size: 18, values: fmtAxis,
@@ -1266,6 +1307,7 @@ function connect() {
       if (m.claude_account) { acct = m.claude_account; paintAcct(); }
       if (m.working_days != null) setWorkingDays(m.working_days);
       loadHistory(m.history || []);
+      offline = (m.offline || []).map(([a, b]) => [a / 1000, b / 1000]);   // drawn just below
       fullSince = m.history_full_since != null ? m.history_full_since / 1000 : -Infinity;
       detailed.length = 0;
       if (m.claude) renderClaude(C, m.claude);
@@ -1317,6 +1359,8 @@ function connect() {
       acct = m.claude_account; paintAcct();
     } else if (m.type === "forecast_model") {
       setForecastModels(m);
+    } else if (m.type === "offline") {
+      setOffline(m.offline);
     } else if (m.type === "interval") {
       setIntervalUI(m.interval);
     }

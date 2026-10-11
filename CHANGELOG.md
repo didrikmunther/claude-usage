@@ -2,6 +2,10 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- Times when you had no internet connection are now shaded grey on the charts and overview strips, labelled "offline", so a gap in your usage line explains itself. Hovering over one says "offline" too. Gaps from before this update are filled in from your history.
+- When updating fails, the reason is now written to the log, which makes problems easier to track down.
+
 ## [0.19.1] - 2026-10-08
 - Opening the dashboard after a long break (say, after your Mac was asleep) now fetches fresh usage straight away. You no longer see a "no new samples" warning first, or the charts and bars catching up step by step.
 - Double-clicking a chart to reset the zoom now moves the overview strip's window back too. Dragging across a chart to zoom also moves it.

@@ -11,10 +11,16 @@ import asyncio
 import concurrent.futures
 import os
 import time
+import warnings
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+# Python 3.14 warns about asyncio.iscoroutinefunction from inside the event loop
+# on every run_in_executor; it grew server.err.log by ~90 MB and buried real errors.
+warnings.filterwarnings("ignore", category=DeprecationWarning,
+                        message=".*iscoroutinefunction")
 
 import ccost
 import changelog
@@ -282,10 +288,33 @@ class Hub:
                 self._wake.set()
             gap = now_gap
 
+    # curl errors that mean the request never got an answer: can't resolve (6),
+    # can't connect (7), timed out (28), TLS connect (35), nothing back (52),
+    # send/receive failed (55, 56).
+    NET_CURL = ("(6)", "(7)", "(28)", "(35)", "(52)", "(55)", "(56)")
+
+    @classmethod
+    def _is_offline(cls, e: Exception) -> bool:
+        # Not OSError: curl_cffi's HTTPError is one, and a 500 is not an outage.
+        if isinstance(e, asyncio.TimeoutError):
+            return True
+        msg = str(e)
+        return "curl:" in msg and any(c in msg for c in cls.NET_CURL)
+
+    def _note_ok(self, who: str) -> None:
+        n = self._err_streak.pop(who, 0)
+        if n:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {who}: back after "
+                  f"{n} failed poll{'s' if n > 1 else ''}", flush=True)
+
     def _note_error(self, errs: list, who: str, e: Exception) -> None:
         """Count a failed fetch; report it once `who` has failed QUIET_FAILS
         polls in a row (see QUIET_FAILS)."""
         n = self._err_streak[who] = self._err_streak.get(who, 0) + 1
+        # Every failure goes to server.log, quiet or not: the dashboard only
+        # shows the latest, and a gap in the chart needs its cause on record.
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {self._errmsg(who, e)} "
+              f"({type(e).__name__}, {n} in a row)", flush=True)
         if n >= QUIET_FAILS:
             errs.append(self._errmsg(who, e))
 
@@ -369,6 +398,7 @@ class Hub:
         row = {"ts": ts}
         claude_live = codex_live = claude2_live = None
         errs = []
+        net_down = []                             # fetches that never got an answer
 
         if self.claude_src and time.time() >= self._claude_next:
             try:
@@ -379,7 +409,7 @@ class Hub:
                     crow, claude_live = res
                     row.update(crow)
                 self._claude_streak = 0
-                self._err_streak.pop("Claude", None)
+                self._note_ok("Claude")
             except claude_cli.RateLimited as e:
                 errs.append(self._cooldown_claude(e.retry_after))
             except Exception as e:
@@ -387,6 +417,7 @@ class Hub:
                     errs.append(self._cooldown_claude(0))
                 else:
                     self._note_error(errs, "Claude", e)
+                    net_down.append(self._is_offline(e))
 
         if self._track_cli():
             try:
@@ -396,7 +427,7 @@ class Hub:
                 if res:
                     krow, claude2_live = res
                     row.update(kh=krow["fh"], kd=krow["sd"])
-                self._err_streak.pop("Claude (terminal)", None)
+                self._note_ok("Claude (terminal)")
             except Exception as e:
                 self._note_error(errs, "Claude (terminal)", e)
 
@@ -406,9 +437,22 @@ class Hub:
                     loop.run_in_executor(self._pool, codex_poller.fetch, ts),
                     timeout=FETCH_TIMEOUT)
                 row.update(xrow)
-                self._err_streak.pop("Codex", None)
+                self._note_ok("Codex")
             except Exception as e:
                 self._note_error(errs, "Codex", e)
+                net_down.append(self._is_offline(e))
+
+        # Offline: the remote fetches that ran all failed for want of a
+        # connection. The terminal's numbers don't count either way — on a
+        # failure they fall back to the last snapshot. Codex's on-disk fallback
+        # likewise says nothing about the network.
+        reached = claude_live or (codex_live and codex_live.get("source") == "active")
+        if net_down and all(net_down) and not reached:
+            try:
+                self.store.mark_offline(ts)
+                await self.broadcast({"type": "offline", "offline": self.store.offline_spans()})
+            except Exception as e:
+                errs.append(self._errmsg("store", e))
 
         row["ts"] = ts                            # single timestamp for the combined row
         stored = False
@@ -568,6 +612,7 @@ async def ws(sock: WebSocket):
         "type": "init",
         "history": hub.store.history_overview(full_since, HISTORY_BUCKET_MS),
         "history_full_since": full_since,
+        "offline": hub.store.offline_spans(),
         "claude": hub.latest,
         "claude2": hub.claude2_latest,
         "codex": hub.codex_latest,

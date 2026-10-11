@@ -18,11 +18,13 @@
   --sd-band: rgba(194,65,12,.13);
   --cx1-band: rgba(99,102,241,.13);
   --cx2-band: rgba(59,130,246,.13);
+  --offline: rgba(138,144,153,.14);  /* no internet: shaded under the chart lines */
   --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
   --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg:#0f1115; --ink:#e8eaed; --muted:#8b93a1; --line:#232733; --card:#151821; }
+  :root { --bg:#0f1115; --ink:#e8eaed; --muted:#8b93a1; --line:#232733; --card:#151821;
+          --offline: rgba(139,147,161,.12); }
 }
 
 * { box-sizing: border-box; }

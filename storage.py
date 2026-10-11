@@ -34,7 +34,58 @@ class Store:
         for col in ("cp", "cs", "cc", "kh", "kd"):
             if col not in have:
                 self._db.execute(f"ALTER TABLE samples ADD COLUMN {col} REAL")
+        # Stretches with no internet: [start, end] ms of the polls that failed
+        # for it. Kept apart from samples because the worst outages store no
+        # sample at all.
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS offline (start INTEGER PRIMARY KEY, end INTEGER)")
         self._db.commit()
+        self._backfill_offline()
+
+    # Polls this close together belong to one outage. A failing poll takes up to
+    # two fetch timeouts on top of the interval, so a fixed few minutes is too tight.
+    OFFLINE_JOIN_MS = 10 * 60 * 1000
+
+    def mark_offline(self, ts: int) -> None:
+        """Record that the poll at `ts` failed for want of a connection: extend
+        the latest outage if it ended recently, else start a new one."""
+        with self._lock:
+            r = self._db.execute(
+                "SELECT start, end FROM offline ORDER BY start DESC LIMIT 1").fetchone()
+            if r and ts - r[1] <= self.OFFLINE_JOIN_MS:
+                self._db.execute("UPDATE offline SET end = ? WHERE start = ?", (ts, r[0]))
+            else:
+                self._db.execute("INSERT OR REPLACE INTO offline VALUES (?, ?)", (ts, ts))
+            self._db.commit()
+
+    def offline_spans(self) -> list[list[int]]:
+        with self._lock:
+            return [list(r) for r in self._db.execute(
+                "SELECT start, end FROM offline ORDER BY start")]
+
+    def _backfill_offline(self) -> None:
+        """Before outages were recorded, an outage left rows where the desktop app
+        and Codex both came back empty while the terminal's snapshot kept a row
+        going. Take runs of those, between rows where both had data, as outages —
+        once; either one coming back ends the run. A setup without one of the
+        two never matches."""
+        with self._lock:
+            if self._db.execute(
+                    "SELECT 1 FROM config WHERE key = 'offline_backfilled'").fetchone():
+                return
+            spans, run, prev_ok = [], None, False
+            for ts, fh, cs in self._db.execute("SELECT ts, fh, cs FROM samples ORDER BY ts"):
+                if fh is None and cs is None:
+                    if run or prev_ok:
+                        run = [run[0] if run else ts, ts]
+                    continue
+                if run:
+                    spans.append(run)
+                run, prev_ok = None, fh is not None and cs is not None
+            self._db.executemany("INSERT OR IGNORE INTO offline VALUES (?, ?)", spans)
+            self._db.execute(
+                "INSERT OR REPLACE INTO config (key, value) VALUES ('offline_backfilled', '1')")
+            self._db.commit()
 
     COLS = ("ts", "fh", "sd", "so", "sn", "credits", "cp", "cs", "cc", "kh", "kd")
 

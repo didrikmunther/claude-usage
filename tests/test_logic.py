@@ -597,3 +597,27 @@ def test_history_range_returns_the_full_detail_between_bounds():
         rows = s.history(since_ms=10 * 60_000, until_ms=20 * 60_000)
         assert [r["fh"] for r in rows] == [float(i) for i in range(10, 21)]
         assert len(s.history(since_ms=0, until_ms=10**12, limit=5)) == 5
+
+
+def test_mark_offline_joins_nearby_polls_into_one_outage():
+    with tempfile.TemporaryDirectory() as d:
+        s = Store(os.path.join(d, "u.db"))
+        for t in (0, 100_000, 200_000):            # polls ~1.5 min apart: one outage
+            s.mark_offline(t)
+        s.mark_offline(200_000 + Store.OFFLINE_JOIN_MS + 1)   # long after: a new one
+        assert s.offline_spans() == [[0, 200_000],
+                                     [200_000 + Store.OFFLINE_JOIN_MS + 1] * 2]
+
+
+def test_offline_backfill_takes_runs_where_both_providers_went_empty():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "u.db")
+        s = Store(path)
+        rows = [(1, 5.0, 7.0), (2, None, None), (3, None, None), (4, None, 7.0),  # Codex back first
+                (5, 5.0, 7.0), (6, None, 7.0), (7, 5.0, 7.0)]                  # one-sided: not offline
+        for ts, fh, cs in rows:
+            s.insert({"ts": ts, "fh": fh, "cs": cs, "kh": 1.0})
+        s._db.execute("DELETE FROM config WHERE key = 'offline_backfilled'")
+        s._db.commit()
+        assert Store(path).offline_spans() == [[2, 3]]
+        assert Store(path).offline_spans() == [[2, 3]]   # once, not again per start
