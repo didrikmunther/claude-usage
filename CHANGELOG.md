@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.20.0] - 2026-10-11
 - Times when you had no internet connection are now shaded grey on the charts and overview strips, labelled "offline", so a gap in your usage line explains itself. Hovering over one says "offline" too. Gaps from before this update are filled in from your history.
 - When updating fails, the reason is now written to the log, which makes problems easier to track down.
 
