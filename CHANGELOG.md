@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.20.1] - 2026-10-11
 - Short connection blips of a minute or two no longer show up as thin grey stripes on the charts. Only outages of 5 minutes or more are shaded, and outages a few minutes apart are shaded as one.
 
 ## [0.20.0] - 2026-10-11
