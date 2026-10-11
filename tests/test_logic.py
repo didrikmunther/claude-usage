@@ -602,11 +602,23 @@ def test_history_range_returns_the_full_detail_between_bounds():
 def test_mark_offline_joins_nearby_polls_into_one_outage():
     with tempfile.TemporaryDirectory() as d:
         s = Store(os.path.join(d, "u.db"))
-        for t in (0, 100_000, 200_000):            # polls ~1.5 min apart: one outage
+        for t in range(0, 6 * 60_000, 90_000):     # polls ~1.5 min apart: one outage
             s.mark_offline(t)
-        s.mark_offline(200_000 + Store.OFFLINE_JOIN_MS + 1)   # long after: a new one
-        assert s.offline_spans() == [[0, 200_000],
-                                     [200_000 + Store.OFFLINE_JOIN_MS + 1] * 2]
+        s.mark_offline(10**9)                      # long after: a new one
+        rows = s._db.execute("SELECT start, end FROM offline ORDER BY start").fetchall()
+        assert rows == [(0, 270_000), (10**9, 10**9)]
+
+
+def test_offline_spans_drop_blips_and_merge_close_outages():
+    with tempfile.TemporaryDirectory() as d:
+        s = Store(os.path.join(d, "u.db"))
+        m = 60_000
+        s._db.executemany("INSERT INTO offline VALUES (?, ?)", [
+            (0, 3 * m), (6 * m, 9 * m),            # 3 min apart: one, 9 min long
+            (100 * m, 100 * m),                    # a lone missed poll
+            (200 * m, 204 * m),                    # 4 min: too short on its own
+            (300 * m, 310 * m)])
+        assert s.offline_spans() == [[0, 9 * m], [300 * m, 310 * m]]
 
 
 def test_offline_backfill_takes_runs_where_both_providers_went_empty():
@@ -619,5 +631,6 @@ def test_offline_backfill_takes_runs_where_both_providers_went_empty():
             s.insert({"ts": ts, "fh": fh, "cs": cs, "kh": 1.0})
         s._db.execute("DELETE FROM config WHERE key = 'offline_backfilled'")
         s._db.commit()
-        assert Store(path).offline_spans() == [[2, 3]]
-        assert Store(path).offline_spans() == [[2, 3]]   # once, not again per start
+        spans = lambda st: st._db.execute("SELECT start, end FROM offline").fetchall()
+        assert spans(Store(path)) == [(2, 3)]
+        assert spans(Store(path)) == [(2, 3)]      # once, not again per start
