@@ -2,6 +2,9 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- The steam that rises from a burn-rate gauge running over the max is no longer cut off at the top.
+
 ## [0.20.2] - 2026-10-11
 - Short connection blips show on the charts again, as in 0.20.0. Every time the connection dropped is shaded, however brief.
 

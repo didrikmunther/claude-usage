@@ -176,7 +176,8 @@ table.acc-tbl tr.active td:first-child::after { content: " · in use"; color: va
 .usage-row .bars { flex: 1; margin-bottom: 0; }
 .gauge { width: 148px; flex-shrink: 0; text-align: center; }
 .gauge-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 1px; }
-.gauge-svg { width: 100%; height: auto; display: block; }
+/* visible: steam rises past the top of the viewBox, over the caption */
+.gauge-svg { width: 100%; height: auto; display: block; overflow: visible; }
 .gauge-val { fill: var(--ink); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
 /* steam vented from the gauge while it's over the max */
 .steam-puff { transform-box: fill-box; transform-origin: center; animation: steam 1.9s ease-out forwards; }
