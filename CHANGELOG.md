@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.20.3] - 2026-10-12
 - The steam that rises from a burn-rate gauge running over the max is no longer cut off at the top.
 
 ## [0.20.2] - 2026-10-11
