@@ -2,6 +2,9 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- Opening the menu-bar panel now shows your latest usage straight away. Before, the charts could fast-forward through everything that happened while the panel was closed.
+
 ## [0.20.3] - 2026-10-12
 - The steam that rises from a burn-rate gauge running over the max is no longer cut off at the top.
 

@@ -461,11 +461,6 @@ function appendPoint(st, tsSec, a, b) {
   return true;
 }
 
-function pushPoint(st, tsSec, a, b) {
-  if (!appendPoint(st, tsSec, a, b)) return;
-  applyRange(st);
-  renderConsumed();
-}
 
 function loadHistory(rows) {
   C.data = [[], [], []]; K.data = [[], [], []]; X.data = [[], [], []];
@@ -989,6 +984,29 @@ function setIntervalUI(n) {
   $("ival").value = Math.min(Number($("ival").max), n);
 }
 
+// Samples are stored as they arrive but drawn once per frame, from the newest.
+// The menu-bar panel's page is paused while closed and its socket delivers the
+// whole backlog the moment it opens: drawing each sample — a forecast recompute
+// apiece, a frame in between — played back the hours it missed like a fast-forward.
+const pending = {};
+let drawQueued = false;
+function drawSamplesSoon() {
+  if (drawQueued) return;
+  drawQueued = true;
+  requestAnimationFrame(() => {
+    drawQueued = false;
+    const p = { ...pending };
+    for (const k in pending) delete pending[k];
+    if (p.quiet) quietly();
+    if (p.claude) renderClaude(C, p.claude);
+    if (p.claude2) renderClaude(K, p.claude2);
+    if (p.codex) renderCodex(p.codex);
+    applyRangeAll();
+    if (p.quiet) { updateGauges(); snapGauges(); }
+    setStatus(p.status);
+  });
+}
+
 // ---- websocket ----
 let ws = null, backoff = 500;
 let bootVersion = null;   // the version this page's own scripts came from
@@ -1306,6 +1324,7 @@ function connect() {
       setForecastModels(m);
       if (m.claude_account) { acct = m.claude_account; paintAcct(); }
       if (m.working_days != null) setWorkingDays(m.working_days);
+      for (const k in pending) delete pending[k];   // superseded by this snapshot
       loadHistory(m.history || []);
       offline = (m.offline || []).map(([a, b]) => [a / 1000, b / 1000]);   // drawn just below
       fullSince = m.history_full_since != null ? m.history_full_since / 1000 : -Infinity;
@@ -1331,14 +1350,13 @@ function connect() {
     } else if (m.type === "sample") {
       // A refresh landing, or the backlog a paused page drains on waking: put it
       // up as it stands rather than animate through each step.
-      const quiet = refreshUntil || Date.now() - sampleTs(m) > CATCHUP_AGE_MS;
-      if (quiet) quietly();
+      if (refreshUntil || Date.now() - sampleTs(m) > CATCHUP_AGE_MS) pending.quiet = true;
       refreshUntil = 0;
-      if (m.claude) { pushPoint(C, m.claude.ts / 1000, m.claude.fh, m.claude.sd); renderClaude(C, m.claude); }
-      if (m.claude2) { pushPoint(K, m.claude2.ts / 1000, m.claude2.fh, m.claude2.sd); renderClaude(K, m.claude2); }
-      if (m.codex) { pushPoint(X, m.codex.ts / 1000, m.codex.cp, m.codex.cs); renderCodex(m.codex); }
-      if (quiet) { updateGauges(); snapGauges(); }
-      setStatus(m.status);
+      if (m.claude) { appendPoint(C, m.claude.ts / 1000, m.claude.fh, m.claude.sd); pending.claude = m.claude; }
+      if (m.claude2) { appendPoint(K, m.claude2.ts / 1000, m.claude2.fh, m.claude2.sd); pending.claude2 = m.claude2; }
+      if (m.codex) { appendPoint(X, m.codex.ts / 1000, m.codex.cp, m.codex.cs); pending.codex = m.codex; }
+      pending.status = m.status;
+      drawSamplesSoon();
     } else if (m.type === "cc") {
       renderCC(m.cc);
     } else if (m.type === "xcost") {
