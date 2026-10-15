@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -132,6 +133,22 @@ def test_apply_status_reports_what_the_updater_wrote():
             fh.write("ok\tv1.2.3\n")
         assert updater.apply_status()["state"] == "ok"
 
+
+
+def test_is_applying_only_for_a_fresh_busy():
+    # /api/update refuses a second run while this holds; a run killed mid-way
+    # must not block updates forever.
+    import updater
+    with tempfile.TemporaryDirectory() as d:
+        updater.STATUS_FILE = os.path.join(d, "update-status")
+        assert not updater.is_applying()                         # never ran
+        updater._write_status("busy", "applying v1.2.3")
+        assert updater.is_applying()
+        old = time.time() - updater.BUSY_STALE_SEC - 1
+        os.utime(updater.STATUS_FILE, (old, old))
+        assert not updater.is_applying()                         # leftover from a killed run
+        updater._write_status("ok", "v1.2.3")
+        assert not updater.is_applying()
 
 def test_burn_rate():
     from server import burn_rate                    # imported here: pulls in FastAPI app

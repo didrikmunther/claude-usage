@@ -1274,10 +1274,13 @@ async function applyUpdate() {
     if (chk) { chk.dataset.busy = "0"; chk.disabled = false; setCheckBtnLabel(); }
   };
   btn.disabled = true;
+  const chk = $("checkUpdate");                   // either button starts it: lock both
+  if (chk) { chk.dataset.busy = "1"; chk.disabled = true; }
   msg.textContent = "Updating… the app will restart in a moment.";
   try {
     const r = await fetch("/api/update", { method: "POST" });
-    if (!r.ok) {                       // nothing to apply (e.g. 400)
+    // 409: another page or button already started it — wait on that one.
+    if (!r.ok && r.status !== 409) {   // nothing to apply (e.g. 400)
       const body = await r.json().catch(() => ({}));
       failed("Update didn't start: " + (body.error || "HTTP " + r.status));
       setTimeout(() => renderUpdate(lastUpdate), 3000);    // restore true state

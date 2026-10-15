@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VERSION_FILE = os.path.join(HERE, "VERSION")
@@ -100,16 +101,45 @@ def apply_status() -> dict:
     return {"state": state or "idle", "message": message}
 
 
+# A run that was killed (reboot, kill -9) never writes ok/fail, so past this a
+# "busy" is a leftover, not an update still going. Longer than the page's wait.
+BUSY_STALE_SEC = 5 * 60
+
+
+def _write_status(state: str, message: str) -> None:
+    os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
+    with open(STATUS_FILE, "w") as fh:
+        fh.write(f"{state}\t{message}\n")
+
+
+def is_applying() -> bool:
+    """An update.sh run is still going. Two at once race on git's refs, and the
+    loser reports a failure for an update that actually went through."""
+    if apply_status()["state"] != "busy":
+        return False
+    try:
+        return time.time() - os.path.getmtime(STATUS_FILE) < BUSY_STALE_SEC
+    except OSError:
+        return False
+
+
 def spawn_apply(tag: str) -> None:
     """Launch the detached updater for `tag`. Returns immediately; the helper
     runs independently so it survives the server restart it triggers."""
     if parse_version(tag) is None:
         raise ValueError(f"refusing to update to non-semver tag: {tag!r}")
-    subprocess.Popen(
-        ["/bin/bash", UPDATE_SCRIPT, tag],
-        cwd=HERE, start_new_session=True,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-    )
+    # Marked busy here, not only by update.sh, so a second request arriving
+    # before the script gets going already sees it (is_applying).
+    _write_status("busy", f"applying {tag}")
+    try:
+        subprocess.Popen(
+            ["/bin/bash", UPDATE_SCRIPT, tag],
+            cwd=HERE, start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+        )
+    except OSError as e:
+        _write_status("fail", f"couldn't start the updater: {e}")
+        raise
 
 
 if __name__ == "__main__":

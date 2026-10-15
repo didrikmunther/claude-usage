@@ -574,6 +574,11 @@ async def api_update():
     tag = info.get("latest")
     if not info.get("update_available") or not tag:
         return JSONResponse({"ok": False, "error": "no update available"}, status_code=400)
+    # One run at a time, whoever asks: both update buttons, or the menu bar and a
+    # browser tab, would otherwise start two and race each other's git fetch.
+    if updater.is_applying():
+        return JSONResponse({"ok": False, "error": "an update is already in progress"},
+                            status_code=409)
     try:
         updater.spawn_apply(tag)                    # detached; restarts us shortly
         return JSONResponse({"ok": True, "applying": tag})
