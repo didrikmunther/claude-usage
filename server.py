@@ -67,13 +67,31 @@ app = FastAPI(title="Claude Usage")
 
 def burn_rate(samples: list[dict], key: str, lookback_ms: int = 300_000) -> float:
     """%-points/hour over the trailing window (least-squares slope of `key`),
-    clamped to 0. Mirrors the dashboard's recentSlope so the menu-bar gauge and
-    the web gauge agree. `samples` are storage rows (ts in ms), ascending."""
+    clamped to 0. Mirrors the dashboard's burnRate so the menu-bar gauge and
+    the web gauge agree. `samples` are storage rows (ts in ms), ascending.
+
+    The meters move in whole points, so at a slow burn the short window mostly
+    holds no change and a plain slope reads 0 between ticks. When it can't see
+    two points of rise, read the spacing of recent ticks instead, looking back
+    up to 12x as far."""
     if not samples:
         return 0.0
-    cut = samples[-1]["ts"] - lookback_ms
+    now = samples[-1]["ts"] / 1000.0
+    max_back = 12 * lookback_ms / 1000.0
     pts = [(s["ts"] / 1000.0, s[key]) for s in samples
-           if s.get(key) is not None and s["ts"] >= cut]
+           if s.get(key) is not None and s["ts"] / 1000.0 >= now - max_back]
+    start = 0                                    # this cycle only: cut at a reset dip
+    for i in range(1, len(pts)):
+        if pts[i][1] < pts[i - 1][1] - 5:
+            start = i
+    pts = pts[start:]
+    short = [p for p in pts if p[0] >= now - lookback_ms / 1000.0]
+    if short and short[-1][1] - short[0][1] >= 2:
+        return _slope_per_hour(short)
+    return _tick_rate(pts, now, max_back) * 3600.0
+
+
+def _slope_per_hour(pts: list[tuple[float, float]]) -> float:
     if len(pts) < 3 or pts[-1][0] - pts[0][0] < 180:
         return 0.0
     n = len(pts)
@@ -86,6 +104,21 @@ def burn_rate(samples: list[dict], key: str, lookback_ms: int = 300_000) -> floa
     if abs(den) < 1e-9:
         return 0.0
     return max(0.0, (n * sxy - sx * sy) / den * 3600.0)   # %/sec → %/hour
+
+
+def _tick_rate(pts: list[tuple[float, float]], now: float, max_back: float) -> float:
+    """%/sec from the spacing of whole-point steps; never more than the last step
+    spread over the time since it, so stopping winds the needle down."""
+    steps = [(pts[i][0], pts[i][1] - pts[i - 1][1])
+             for i in range(1, len(pts)) if pts[i][1] > pts[i - 1][1]]
+    if not steps:
+        return 0.0
+    last_t, last_rise = steps[-1]
+    if len(steps) >= 2:
+        rate = sum(r for _, r in steps[1:]) / max(1.0, last_t - steps[0][0])
+    else:
+        rate = last_rise / max_back              # one step: no spacing to read yet
+    return min(rate, last_rise / max(1.0, now - last_t))
 
 
 
@@ -225,7 +258,7 @@ class Hub:
         each scaled to the window that platform is burning fastest relative to."""
         if not self.store:
             return {"claude_rate": 0.0, "codex_rate": 0.0, "claude_frac": 0.0, "codex_frac": 0.0}
-        hist = self.store.history(since_ms=poller.now_ms() - 4 * 3600 * 1000)  # ≥ longest lookback
+        hist = self.store.history(since_ms=poller.now_ms() - 36 * 3600 * 1000)  # ≥ longest lookback (12× 2.8h)
         ck = "kh" if self._shows_cli() else "fh"                  # the switched-to Claude
         cr = burn_rate(hist, ck, lookback_ms=5 * 60 * 1000)       # Claude: 5-hour on a 0–100 dial
         cf = min(1.0, cr / 100.0)                                 # needle pegs at 100 %/h

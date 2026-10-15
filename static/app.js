@@ -494,13 +494,40 @@ function countdown(iso) {
 
 // Trailing-window burn rate in %-points/hour for the gauge. Clamped to 0 so an
 // idle stretch or a post-reset dip reads as "stopped", not negative.
+// The meters move in whole points, so at a slow burn most short windows hold no
+// change at all (2 %/h is one tick per 30 min) and a plain slope reads 0 between
+// ticks. When the short window can't see two points of rise, measure the spacing
+// of the recent ticks instead, looking back up to 12× as far.
 function burnRate(tsArr, yArr, nowSec, lookbackSec = 300) {
-  const pts = [];
-  for (let i = 0; i < tsArr.length; i++) if (yArr[i] != null) pts.push([tsArr[i], yArr[i]]);
-  const slope = recentSlope(pts, lookbackSec, nowSec);   // %/sec or null
-  return slope == null ? 0 : Math.max(0, slope * 3600);  // %/hour
+  const maxBack = 12 * lookbackSec;
+  let pts = [];
+  for (let i = 0; i < tsArr.length; i++)
+    if (yArr[i] != null && tsArr[i] >= nowSec - maxBack) pts.push([tsArr[i], yArr[i]]);
+  let start = 0;                                          // this cycle only: cut at a reset dip
+  for (let i = 1; i < pts.length; i++) if (pts[i][1] < pts[i - 1][1] - 5) start = i;
+  pts = pts.slice(start);
+  const short = pts.filter((p) => p[0] >= nowSec - lookbackSec);
+  if (short.length && short[short.length - 1][1] - short[0][1] >= 2) {
+    const slope = recentSlope(pts, lookbackSec, nowSec);   // %/sec or null
+    return slope == null ? 0 : Math.max(0, slope * 3600);  // %/hour
+  }
+  return tickRate(pts, nowSec, maxBack) * 3600;
 }
 
+// %/sec from the spacing of whole-point steps: the rise after the first step over
+// the time between first and last. Never more than the last step spread over the
+// time since it, so the needle winds down once you stop instead of holding.
+function tickRate(pts, nowSec, maxBack) {
+  const steps = [];
+  for (let i = 1; i < pts.length; i++)
+    if (pts[i][1] > pts[i - 1][1]) steps.push([pts[i][0], pts[i][1] - pts[i - 1][1]]);
+  if (!steps.length) return 0;
+  const last = steps[steps.length - 1];
+  const rate = steps.length >= 2
+    ? steps.slice(1).reduce((a, s) => a + s[1], 0) / Math.max(1, last[0] - steps[0][0])
+    : last[1] / maxBack;                                  // one step: no spacing to read yet
+  return Math.min(rate, last[1] / Math.max(1, nowSec - last[0]));
+}
 
 function progRow(label, p) {
   if (!p) return "";

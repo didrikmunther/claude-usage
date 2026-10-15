@@ -150,6 +150,7 @@ def test_is_applying_only_for_a_fresh_busy():
         updater._write_status("ok", "v1.2.3")
         assert not updater.is_applying()
 
+
 def test_burn_rate():
     from server import burn_rate                    # imported here: pulls in FastAPI app
     base = 1_000_000
@@ -157,10 +158,25 @@ def test_burn_rate():
     assert round(burn_rate(rising, "fh")) == 60      # %/hour
     flat = [{"ts": base + i * 60_000, "fh": 40.0} for i in range(6)]
     assert burn_rate(flat, "fh") == 0.0
-    assert burn_rate(rising[:2], "fh") == 0.0        # too few points
+    assert burn_rate(rising[:2], "fh") == 1.0        # one tick, nothing to space it by
     nones = [{"ts": base + i * 60_000, "fh": None} for i in range(6)]
     assert burn_rate(nones, "fh") == 0.0             # all missing → 0
     assert burn_rate([], "fh") == 0.0
+
+
+def test_burn_rate_reads_slow_whole_point_ticks():
+    # 2.4 %/h moves a whole-point meter once every 25 minutes: the 5-minute
+    # window is flat almost always, yet the rate is not zero.
+    from server import burn_rate
+    base = 1_000_000
+    slow = [{"ts": base + i * 60_000, "fh": 50.0 + (i // 25)} for i in range(61)]
+    assert round(burn_rate(slow, "fh"), 1) == 2.4
+    # ...and stopping winds it down: no tick for 50 min reads half the pace,
+    # nothing for longer than the 60-minute reach reads 0.
+    idle = slow + [{"ts": base + (60 + i) * 60_000, "fh": 52.0} for i in range(1, 41)]
+    assert 0 < burn_rate(idle, "fh") < 1.5
+    gone = idle + [{"ts": base + (100 + i) * 60_000, "fh": 52.0} for i in range(1, 61)]
+    assert burn_rate(gone, "fh") == 0.0
 
 
 def test_is_newer():
