@@ -2,6 +2,9 @@
 
 What's new in each version, newest first.
 
+## [0.20.5] - 2026-10-15
+- Pressing Update more than once, or from both the dashboard and the menu bar, no longer starts two updates at the same time. That could make a successful update look like it had failed with "couldn't reach the code repository".
+
 ## [0.20.4] - 2026-10-14
 - Opening the menu-bar panel now shows your latest usage straight away. Before, the charts could fast-forward through everything that happened while the panel was closed.
 
