@@ -2,6 +2,9 @@
 
 What's new in each version, newest first.
 
+## [0.20.6] - 2026-10-15
+- The burn-rate gauges now show a slow, steady burn instead of sitting at 0. Usage moves in whole percents, so at a couple of percent an hour the needle used to read 0 most of the time and jump only when the number ticked over.
+
 ## [0.20.5] - 2026-10-15
 - Pressing Update more than once, or from both the dashboard and the menu bar, no longer starts two updates at the same time. That could make a successful update look like it had failed with "couldn't reach the code repository".
 
