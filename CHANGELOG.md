@@ -2,6 +2,9 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- The reset countdown moved into the grey part of each meter, at its right end, so it's shorter: just the time left, like ↻ 2d 4h. When the bar is nearly full and there's no room, it shows just above the bar's end instead.
+
 ## [0.24.0] - 2026-11-08
 - The charts have two more ranges: 2 weeks and Month, next to 24h, Week and Full.
 - Clicking the menu bar opens the panel much faster after it has been closed for a while: it used to take a few seconds.

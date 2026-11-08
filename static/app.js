@@ -457,9 +457,9 @@ function countdown(iso) {
   const ms = new Date(iso).getTime() - Date.now();
   if (ms <= 0) return "resetting…";
   const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
-  if (d >= 1) return `resets in ${d}d ${h % 24}h`;
-  if (h >= 1) return `resets in ${h}h ${m % 60}m`;
-  return `resets in ${m}m`;
+  if (d >= 1) return `${d}d ${h % 24}h`;
+  if (h >= 1) return `${h}h ${m % 60}m`;
+  return `${m}m`;
 }
 
 
@@ -595,9 +595,9 @@ function wireScope() {
 }
 
 function renderClaudeResets(st) {
-  $(st.p + "fhReset").textContent = countdown(st.resets.five_hour);
+  meter(st.p + "fh").reset(st.resets.five_hour);
   const sl = scopedLimit(st);
-  $(st.p + "sdReset").textContent = countdown(sl ? sl.resets_at : st.resets.seven_day);
+  meter(st.p + "sd").reset(sl ? sl.resets_at : st.resets.seven_day);
 }
 
 // The text rows read the SAME trajectory the chart draws, so a sentence and the
@@ -684,9 +684,6 @@ function renderCodex(s) {
     $(slot.id + "Cell").hidden = !w && slot.label === "5-hour" && !claudeHasFiveHour();
     $(slot.id + "Cell").classList.toggle("placeholder", !w);
     if (!w) continue;
-    const r = $(slot.id + "Reset");
-    r.dataset.reset = w.reset_at || "";
-    r.textContent = countdown(w.reset_at);
     meter(slot.id).used(w.used_percent, w.reset_at);
   }
   // Any window without a slot gets a plain row under the chart.
@@ -1415,9 +1412,11 @@ const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const SMOKERS = new Set();   // each meter's puff timer, run from one animation loop
 function smokeLoop(now) { for (const f of SMOKERS) f(now); requestAnimationFrame(smokeLoop); }
 const METERS = new Map();   // "fh", "k_sd", "cx7", … → meter
-const NO_METER = { used() {}, outlook() {}, rate() {} };
+const NO_METER = { used() {}, outlook() {}, rate() {}, reset() {} };
 const meter = (key) => METERS.get(key) || NO_METER;
 const escHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+const RESET_ICON = `<svg class="cd-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg>`;
 
 function makeMeter(key, color, label, provider) {
   const el = $(key + "Meter");
@@ -1427,7 +1426,7 @@ function makeMeter(key, color, label, provider) {
       <div class="m-seg m-used" data-part="used" tabindex="0"><span class="m-lbl"></span></div>
       <div class="m-seg m-rate" data-part="rate" tabindex="0"><span class="m-lbl"></span></div>
       <div class="m-seg m-fc" data-part="fc" tabindex="0"><span class="m-lbl"></span></div>
-      <div class="m-seg m-left" data-part="left" tabindex="0"></div>
+      <div class="m-seg m-left" data-part="left" tabindex="0"><span class="m-cd">${RESET_ICON}<span></span></span></div>
     </div><div class="m-tip" role="tooltip" hidden></div>`;
   const smoke = document.createElement("div");
   smoke.className = "m-smoke";
@@ -1435,6 +1434,10 @@ function makeMeter(key, color, label, provider) {
   const bar = el.querySelector(".meter"), tip = el.querySelector(".m-tip");
   const seg = (part) => bar.querySelector(`[data-part="${part}"]`);
   const usedEl = seg("used"), fcEl = seg("fc"), leftEl = seg("left"), rateEl = seg("rate");
+  // The countdown sits in the grey block; when that's too narrow it moves above
+  // the bar's right end (the cell's own reset line).
+  const cdEl = leftEl.querySelector(".m-cd"), outEl = $(key + "Reset");
+  if (outEl) outEl.innerHTML = `${RESET_ICON}<span></span>`;
   const st = { used: null, reset: null, atReset: null, over: false, hitMs: null, note: "", rate: null, hours: 168 };
 
   // Each block is its share of the bar; a block with nothing in it drops out.
@@ -1465,6 +1468,21 @@ function makeMeter(key, color, label, provider) {
     usedEl.classList.toggle("tight", px(u) < 40);
     fcEl.classList.toggle("tight", px(end - u - r) < 40);
     rateEl.classList.toggle("tight", px(r) < 56);
+    paintReset(px(100 - end));
+  };
+  let leftPx = 0;
+  const paintReset = (w = leftPx) => {
+    leftPx = w;
+    const txt = st.reset ? countdown(st.reset) : "";
+    cdEl.lastChild.textContent = txt;
+    const fits = txt !== "" && w - 2 >= cdEl.offsetWidth + 4;
+    cdEl.style.visibility = fits ? "" : "hidden";   // not display:none, so it can still be measured
+    if (outEl) {
+      outEl.lastChild.textContent = txt;
+      outEl.hidden = fits || txt === "";
+      outEl.setAttribute("aria-label", txt ? `resets in ${txt}` : "");
+    }
+    leftEl.setAttribute("aria-label", txt ? `resets in ${txt}` : "");
   };
 
   // A fast burn smokes: puffs rise off the rate block, thicker past full scale.
@@ -1485,6 +1503,7 @@ function makeMeter(key, color, label, provider) {
   });
   new ResizeObserver(paint).observe(bar);
 
+  const resetsIn = () => (st.reset ? ` It resets in ${countdown(st.reset)}.` : "");
   const hoursLeft = () => (st.reset ? (new Date(st.reset).getTime() - Date.now()) / 3600e3 : null);
   const tips = {
     used: () => [`Used · ${Math.round(st.used ?? 0)}%`,
@@ -1495,9 +1514,9 @@ function makeMeter(key, color, label, provider) {
       : [`Forecast · ${Math.round(st.atReset)}% at reset`,
          `About ${Math.max(0, Math.round(st.atReset - st.used))}% more before the reset. The model below makes this forecast and the dashed line on the chart.`],
     left: () => st.atReset == null || st.over
-      ? [`Unused · ${Math.round(100 - (st.used ?? 0))}%`, `What's still free of your ${label} limit right now.`]
+      ? [`Unused · ${Math.round(100 - (st.used ?? 0))}%`, `What's still free of your ${label} limit right now.${resetsIn()}`]
       : [`Left at reset · ${Math.round(100 - st.atReset)}%`,
-         `What should still be unused when the limit resets${st.reset ? " " + countdown(st.reset).replace(/^resets /, "") : ""}.`],
+         `What should still be unused when the limit resets.${resetsIn()}`],
     rate: () => {
       const h = hoursLeft(), sc = SCALES[st.hours] || SCALES[168];
       const pace = h > 0 ? (100 - (st.used ?? 0)) / h : null;
@@ -1545,6 +1564,8 @@ function makeMeter(key, color, label, provider) {
 
   METERS.set(key, {
     used(pct, resetIso) { st.used = pct; st.reset = resetIso || null; paint(); },
+    // Re-reads the countdown (every tick); a new reset time can come with it.
+    reset(resetIso) { if (resetIso !== undefined) st.reset = resetIso || null; paintReset(); },
     // atReset: % used at the reset (null when unknown); hitMs: when it reaches 100% first.
     outlook(atReset, hitMs) { st.over = hitMs != null; st.hitMs = hitMs; st.atReset = atReset; paint(); },
     // rate: true %/h (null hides it); hours picks the scale its colour is read on.
@@ -1800,9 +1821,7 @@ function tick() {
   lastTick = now;
   if (paused) resync(); else checkStale();
   for (const st of shownClaudes()) { renderClaudeResets(st); renderClaudeForecast(st); }
-  document.querySelectorAll("#colCodex [data-reset]").forEach((el) => {
-    el.textContent = countdown(el.dataset.reset);
-  });
+  for (const slot of CX_SLOTS) meter(slot.id).reset();
   renderCodexForecast();
   updateGauges();
   scoreForecasts();                       // self-throttled to ACC_REFRESH_MS

@@ -173,7 +173,8 @@ table.acc-tbl tr.active td:first-child::after { content: " · in use"; color: va
 
 /* usage meters: one per window. A bar in three blocks (used, the forecast to the
    reset, what's left at the reset) with the burn rate inside; each block has a
-   tooltip. The countdown sits to the right of the bar's base. */
+   tooltip. The countdown sits in the grey block, or above the bar's end when it
+   doesn't fit. */
 .usage-row { display: grid; gap: 22px; margin: 22px 0 32px; }
 .meter-cell { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .meter-cell.placeholder { visibility: hidden; }
@@ -215,8 +216,13 @@ table.acc-tbl tr.active td:first-child::after { content: " · in use"; color: va
 .m-tip.interactive { pointer-events: auto; max-width: min(360px, 100%); }
 .m-tip .m-models { margin-top: 8px; display: flex; flex-wrap: wrap; }
 /* above the bar, on the right: the countdown, and any warning */
-.meter-txt { order: -1; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 2px 12px; }
-.meter-txt .reset { display: inline; font-size: 12px; margin-top: 0; }
+.meter-txt { order: -1; min-height: 18px; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 2px 12px; }
+.meter-txt .reset { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; margin-top: 0; font-variant-numeric: tabular-nums; }
+.meter-txt .reset[hidden] { display: none; }
+/* the countdown, at the grey block's right end (where the reset is) */
+.m-cd { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; font-size: 11.5px; font-variant-numeric: tabular-nums;
+  white-space: nowrap; color: var(--muted); pointer-events: none; }
+.cd-ic { width: 11px; height: 11px; flex: none; }
 .meter-txt > :empty { display: none; }
 .dial-sub { font-size: 12px; font-variant-numeric: tabular-nums; }
 .dial-sub.warn { color: #dc2626; }
