@@ -1,6 +1,8 @@
 # claude-usage
 
-<img alt="claude-usage dashboard — live Claude and Codex usage, burn-rate gauges, a week of history with forecast cones and offline stretches shaded, and the overview strip for panning through all history" src="assets/dashboard.png" />
+<img alt="claude-usage dashboard — a usage meter per limit for Claude and Codex (used, the next hour at the current burn rate, the forecast to the reset, what's left), a week of history with forecast cones and offline stretches shaded, and the overview strip with the range buttons" src="assets/dashboard.png" />
+
+<img alt="The menu bar in Verbose mode: a dial each for Claude and Codex with percent used, time to reset, burn rate and what's left at the reset" src="assets/menubar.png" width="201" />
 
 ## 🤖 Give this to your agent
 
