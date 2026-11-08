@@ -2,6 +2,11 @@
 
 What's new in each version, newest first.
 
+## [0.21.0] - 2026-11-08
+- The menu bar now recovers automatically if it freezes and stops responding to clicks. It saves a local diagnostic before restarting, while usage tracking continues.
+- The window marker in the strip under each chart is easier to grab when zoomed in. It stays visible at a usable size, and dragging its middle always moves it instead of resizing it.
+- Works with plans that no longer have a 5-hour limit, such as Ultra. The menu bar shows your weekly usage instead of disappearing, the burn-rate gauge follows the weekly limit, and the empty 5-hour row, forecast and legend entry are hidden.
+
 ## [0.20.6] - 2026-10-15
 - The burn-rate gauges now show a slow, steady burn instead of sitting at 0. Usage moves in whole percents, so at a couple of percent an hour the needle used to read 0 most of the time and jump only when the number ticked over.
 
