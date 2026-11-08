@@ -2,6 +2,9 @@
 
 What's new in each version, newest first.
 
+## [0.22.0] - 2026-11-08
+- A new menu bar: one dial each for Claude and Codex, with the time until that limit resets. The dial shows how much you've used, how much more you're forecast to use before the reset (red if you'll run out first), and how fast you're using it now. Tick Verbose in the panel to see every number, and click the ? next to it to learn how to read the dial.
+
 ## [0.21.0] - 2026-11-08
 - The menu bar now recovers automatically if it freezes and stops responding to clicks. It saves a local diagnostic before restarting, while usage tracking continues.
 - The window marker in the strip under each chart is easier to grab when zoomed in. It stays visible at a usable size, and dragging its middle always moves it instead of resizing it.
