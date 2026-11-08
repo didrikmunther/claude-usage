@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.24.0] - 2026-11-08
 - The charts have two more ranges: 2 weeks and Month, next to 24h, Week and Full.
 - Clicking the menu bar opens the panel much faster after it has been closed for a while: it used to take a few seconds.
 
