@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reading the dials</title>
+<style>
+  /* Shown in the menu bar's ? popover (380×400). Follows the system appearance. */
+  :root { --bg: #ffffff; --ink: #1d1d1f; --muted: #6e6e73; --track: rgba(29, 29, 31, .14);
+          --claude: #f59e0b; --warn: #e5484d; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1e1e20; --ink: #f2f2f4; --muted: #a1a1a6; --track: rgba(242, 242, 244, .16); }
+  }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 13px/1.45 -apple-system, system-ui, sans-serif; }
+  main { padding: 14px 18px 16px; display: grid; gap: 10px; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  svg { display: block; width: 100%; max-width: 280px; height: auto; margin: 0 auto; }
+  svg text { font: 500 11px -apple-system, system-ui, sans-serif; fill: var(--muted); }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  li { display: grid; grid-template-columns: 26px 1fr; gap: 8px; align-items: center; }
+  .sw { height: 6px; border-radius: 3px; }
+  .used { background: var(--claude); }
+  .fc { background: color-mix(in srgb, var(--claude) 35%, transparent); }
+  .left { background: var(--track); }
+  .over { background: var(--warn); opacity: .75; }
+  .needle { height: 2px; background: var(--ink); }
+  p { margin: 0; color: var(--muted); }
+  b { color: var(--ink); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Reading the dials</h1>
+  <svg id="dial" viewBox="0 0 280 150" role="img" aria-label="A dial: 53% used, forecast 63% at the reset, needle low"></svg>
+  <ul>
+    <li><span class="sw used"></span><span><b>Solid arc:</b> used so far</span></li>
+    <li><span class="sw fc"></span><span><b>Faint arc:</b> what you'll add before the reset</span></li>
+    <li><span class="sw left"></span><span><b>Empty arc:</b> what you'll have left at the reset</span></li>
+    <li><span class="sw over"></span><span><b>Red:</b> you'll run out before the reset</span></li>
+    <li><span class="sw needle"></span><span><b>Needle:</b> how fast you're using it now</span></li>
+  </ul>
+  <p>The number is the time until that limit resets. Claude is the orange dial, Codex the blue one. Turn on <b>Verbose</b> to also see percent used, the rate per hour and what's left.</p>
+</main>
+<script>
+  // Same geometry as the menu bar, scaled up: 53% used, 63% forecast, slow needle.
+  const cx = 140, cy = 128, r = 96, sw = 20, used = 53, fc = 63, frac = 0.12;
+  const pt = (p, rr = r) => { const a = Math.PI * (1 - p / 100); return [cx + Math.cos(a) * rr, cy - Math.sin(a) * rr]; };
+  const arc = (p0, p1) => { const [x0, y0] = pt(p0), [x1, y1] = pt(p1); return `M${x0} ${y0} A${r} ${r} 0 0 1 ${x1} ${y1}`; };
+  const a = Math.PI * (1 - frac), nl = r - sw - 8;
+  const label = (p, text, anchor) => { const [x, y] = pt(p, r + 18); return `<text x="${x}" y="${y}" text-anchor="${anchor}">${text}</text>`; };
+  document.getElementById("dial").innerHTML = `
+    <path d="${arc(0, 100)}" fill="none" stroke="var(--track)" stroke-width="${sw}"/>
+    <path d="${arc(used, fc)}" fill="none" stroke="var(--claude)" stroke-opacity=".35" stroke-width="${sw}"/>
+    <path d="${arc(0, used)}" fill="none" stroke="var(--claude)" stroke-width="${sw}"/>
+    <line x1="${cx}" y1="${cy}" x2="${cx + Math.cos(a) * nl}" y2="${cy - Math.sin(a) * nl}" stroke="var(--ink)" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="${cx}" cy="${cy}" r="5" fill="var(--ink)"/>
+    ${label(22, "used", "end")}${label(58, "forecast", "start")}${label(85, "left", "start")}
+    <text x="${cx}" y="${cy - 34}" text-anchor="middle">burn rate</text>`;
+</script>
+</body>
+</html>

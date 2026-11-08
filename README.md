@@ -17,8 +17,12 @@ A local **menu-bar app + web dashboard** for your **Claude** (Pro/Max) and
 apps show, but live in one place with history graphs, burn-rate forecasts, and
 spike markers.
 
-- **Menu bar:** shows `x%Xh` (5-hour % + hours to reset). Click it to drop the
-  full dashboard down as a panel (a webview of the local server).
+- **Menu bar:** one dial each for Claude and Codex, plus the time until that
+  limit resets. The arc fills with what you've used, a fainter part shows the
+  forecast to the reset (red if you'll run out first), and the needle is your
+  burn rate. **Verbose** adds percent used, rate and what's left; the **?** in
+  the panel explains the dial. Click it to drop the full dashboard down as a
+  panel (a webview of the local server).
 - **Dashboard** (`http://127.0.0.1:44405`): Claude and Codex side by side —
   5h/weekly bars with reset countdowns, a uPlot history graph (24h / week /
   full), a "used this range" tally, per-window forecasts, and hover-to-reveal

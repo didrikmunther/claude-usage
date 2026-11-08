@@ -1,9 +1,12 @@
 """macOS menu-bar app for Claude/Codex usage.
 
-Shows `x%Xh` (5-hour % + hours to reset) on the status bar. Clicking it drops
-the full live dashboard as a popover — a WKWebView pointed at the local server
-(http://127.0.0.1:PORT), so charts/forecasts/WebSocket updates all work as-is.
-A slim header row inside the popover has Reload / Open in browser / Quit.
+Shows one dial per platform on the status bar (see render_menubar_image): the
+arc fills with what's used plus the forecast to the reset, the needle is the
+burn rate, and the text is the time until the reset (Verbose adds every
+number). Clicking it drops the full live dashboard as a popover — a WKWebView
+pointed at the local server (http://127.0.0.1:PORT), so charts/forecasts/
+WebSocket updates all work as-is. A slim header row inside the popover has
+Reload / Open in browser / Zen / Widget / Verbose / ? / Quit.
 
 Raw PyObjC (not rumps) because we need a custom view (webview) in the popover.
 """
@@ -20,7 +23,7 @@ from AppKit import (
     NSViewController, NSView, NSButton, NSBezelStyleRounded, NSFont,
     NSMakeRect, NSMakePoint, NSMakeSize, NSApp, NSWorkspace, NSTimer,
     NSMinYEdge, NSImage, NSImageOnly, NSColor, NSBezierPath,
-    NSFontAttributeName, NSForegroundColorAttributeName,
+    NSFontAttributeName, NSForegroundColorAttributeName, NSBezelStyleHelpButton,
 )
 from Foundation import (
     NSObject, NSURL, NSURLRequest, NSAttributedString, NSUserDefaults,
@@ -28,7 +31,7 @@ from Foundation import (
 )
 from WebKit import WKWebView, WKWebViewConfiguration
 
-from menubar_fmt import lines_for
+from menubar_fmt import dials_for
 from menubar_watchdog import HangWatchdog, start_main_thread_heartbeat
 from widget_panel import WidgetPanel
 
@@ -36,6 +39,7 @@ PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "44405"))
 BASE = f"http://127.0.0.1:{PORT}"
 REFRESH_SEC = 30
 POPW, POPH, HEADER_H = 960, 680, 36
+HELPW, HELPH = 380, 400  # the ? popover that explains the dial
 REV_DUR = 0.9          # menu-bar gauge ignition sweep (seconds)
 ANIM_STEP = 0.03       # animation frame interval
 RISE_EPS = 0.03        # min needle increase (of full dial) to trigger a rev
@@ -46,51 +50,76 @@ CLAUDE_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.961, 0.620, 0.043, 1
 CODEX_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.388, 0.400, 0.945, 1.0)
 
 
-def _draw_gauge(cx, cy, box_r, frac, color):
-    """Mini speedometer: a faint platform-colored arc with a needle whose angle
-    encodes the dial fraction (0 → left/idle, 1 → right/redline). AppKit is y-up."""
-    px, py = cx, cy - box_r * 0.5          # pivot low in the box; arc rises above
-    ra = box_r
+def _arc(px, py, r, p0, p1, width, color):
+    """Stroke the part of the top semicircle from p0% to p1% (0 = left end)."""
+    if p1 - p0 < 0.5:
+        return
+    path = NSBezierPath.bezierPath()
+    path.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise_(
+        NSMakePoint(px, py), r, 180.0 * (1 - p0 / 100), 180.0 * (1 - p1 / 100), True)
+    path.setLineWidth_(width)
+    color.set()
+    path.stroke()
+
+
+def _draw_dial(px, py, r, d, frac, color, zen):
+    """One platform's dial, AppKit y-up, pivot at (px, py). The arc is the
+    window: solid = used, faint = the forecast still to come before the reset
+    (red when it runs out first), empty = left at the reset. The needle is the
+    burn rate on the gauge's dial (frac 0..1, red when pegged)."""
+    sw = max(1.8, r * 0.3)
+    ink = NSColor.labelColor()
+    warn = ink if zen else NSColor.systemRedColor()
+    used = ink if zen else color
+    _arc(px, py, r, 0, 100, sw, ink.colorWithAlphaComponent_(0.16))
+    _arc(px, py, r, d["pct"], d["at_reset"], sw,
+         # Zen can't use red, so overrunning there is only a darker faint arc.
+         (warn.colorWithAlphaComponent_(0.5 if zen else 0.75) if d["over"]
+          else used.colorWithAlphaComponent_(0.35)))
+    _arc(px, py, r, 0, d["pct"], sw, used)
+
     f = max(0.0, min(1.0, frac or 0.0))
-    deg = 180.0 * (1 - f)                  # 0→180° (left), 1→0° (right)
-
-    arc = NSBezierPath.bezierPath()
-    arc.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_(
-        NSMakePoint(px, py), ra, 0.0, 180.0)     # top semicircle (CCW 0→180)
-    color.colorWithAlphaComponent_(0.4).set()
-    arc.setLineWidth_(max(0.8, box_r * 0.22))
-    arc.stroke()
-
-    a = math.radians(deg)
+    a = math.radians(180.0 * (1 - f))
+    nl = r - sw - 0.8
+    ncol = warn if f >= 1.0 else ink
     needle = NSBezierPath.bezierPath()
     needle.moveToPoint_(NSMakePoint(px, py))
-    needle.lineToPoint_(NSMakePoint(px + ra * 0.9 * math.cos(a), py + ra * 0.9 * math.sin(a)))
-    color.set()
-    needle.setLineWidth_(max(1.0, box_r * 0.28))
+    needle.lineToPoint_(NSMakePoint(px + nl * math.cos(a), py + nl * math.sin(a)))
+    needle.setLineWidth_(1.4)
     needle.setLineCapStyle_(1)
+    ncol.set()
     needle.stroke()
+    NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(px - 1.4, py - 1.4, 2.8, 2.8)).fill()
 
 
-def render_menubar_image(lines, height, zen=False):
-    """Build the status-item image (`height` = menu-bar thickness): one row per
-    source (mini burn-rate gauge + text). One line when a single source has data,
-    two stacked smaller lines when both do. `lines` are (kind, text, frac).
-    `zen` drops the backdrop + colors (monochrome template). None when nothing."""
-    if not lines:
+def render_menubar_image(dials, height, zen=False, verbose=False):
+    """Build the status-item image (`height` = menu-bar thickness): the
+    platforms side by side, each a dial plus its text. Clean mode shows the
+    time until the reset; verbose shows "53% · 34h" over "0.3/h · 37% left".
+    `dials` are menubar_fmt.dial_for dicts whose "frac" is the drawn (animated)
+    needle. `zen` drops the backdrop + colors (monochrome template). None when
+    nothing to show."""
+    if not dials:
         return None
-    two = len(lines) >= 2
-    VPAD = 2.5                                  # padding inside the box (top/bottom)
-    GAP, LPAD, RPAD = 3.0, 4.0, 5.0
-    inner_h = height - 2 * VPAD
-    row_h = inner_h / 2 if two else inner_h
-    font = NSFont.monospacedDigitSystemFontOfSize_weight_(min(9.5 if two else 12.5, row_h * 0.95), 0.0)
-    text_color = NSColor.labelColor()
-    ICON = min(11.0 if two else 14.0, row_h * 0.92)
+    DIAL_W, R = 20.0, 8.0
+    GAP, CELL_GAP, LPAD, RPAD = 3.0, 9.0, 4.0, 5.0
+    ink = NSColor.labelColor()
 
-    attrs = {NSFontAttributeName: font, NSForegroundColorAttributeName: text_color}
-    strs = [NSAttributedString.alloc().initWithString_attributes_(t, attrs) for _, t, _ in lines]
-    text_w = max((s.size().width for s in strs), default=0.0)
-    width = math.ceil(LPAD + ICON + GAP + text_w + RPAD)
+    def astr(text, size, weight, color):
+        font = NSFont.monospacedDigitSystemFontOfSize_weight_(size, weight)
+        return NSAttributedString.alloc().initWithString_attributes_(
+            text, {NSFontAttributeName: font, NSForegroundColorAttributeName: color})
+
+    cells = []
+    for d in dials:
+        if verbose:
+            low = (NSColor.systemRedColor() if d["over"] and not zen else NSColor.secondaryLabelColor())
+            texts = [astr(d["top"], 10.0, 0.3, ink), astr(d["bottom"], 8.5, 0.0, low)]
+        else:
+            texts = [astr(d["clean"], 12.0, 0.23, ink)]
+        cells.append((d, texts, max(t.size().width for t in texts)))
+    width = math.ceil(LPAD + sum(DIAL_W + GAP + w for _, _, w in cells)
+                      + CELL_GAP * (len(cells) - 1) + RPAD)
 
     img = NSImage.alloc().initWithSize_(NSMakeSize(width, height))
     img.lockFocus()
@@ -101,13 +130,18 @@ def render_menubar_image(lines, height, zen=False):
         NSColor.textBackgroundColor().colorWithAlphaComponent_(0.4).set()
         NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
             NSMakeRect(0.0, 0.0, width, height), 5.0, 5.0).fill()
-    for i, ((kind, _text, frac), s) in enumerate(zip(lines, strs)):
-        row_y = (height - VPAD) - row_h * (i + 1)  # inset from the box top/bottom
-        cx = LPAD + ICON / 2
-        cy = row_y + row_h / 2
-        _draw_gauge(cx, cy, ICON / 2, frac, CLAUDE_COLOR if kind == "claude" else CODEX_COLOR)
-        ts = s.size()
-        s.drawAtPoint_(NSMakePoint(LPAD + ICON + GAP, row_y + (row_h - ts.height) / 2))
+    x = LPAD
+    for d, texts, tw in cells:
+        color = CLAUDE_COLOR if d["kind"] == "claude" else CODEX_COLOR
+        # Pivot low so the arc (radius R) sits centred in the bar.
+        _draw_dial(x + DIAL_W / 2, height / 2 - R / 2, R, d, d["frac"], color, zen)
+        tx = x + DIAL_W + GAP
+        total = sum(t.size().height for t in texts) - (2.0 if len(texts) > 1 else 0.0)
+        y = (height + total) / 2
+        for t in texts:
+            y -= t.size().height - (1.0 if len(texts) > 1 else 0.0)
+            t.drawAtPoint_(NSMakePoint(tx, y))
+        x = tx + tw + CELL_GAP
     img.unlockFocus()
     # Zen mode: render as a template so the menu bar tints it one monochrome color
     # (drops our brand colors); otherwise keep our colors.
@@ -124,6 +158,7 @@ class AppDelegate(NSObject):
         self._defaults = NSUserDefaults.alloc().initWithSuiteName_("com.claude-usage")
         self._zen = self._defaults.boolForKey_("zenMode")
         self._widget_on = self._defaults.boolForKey_("widgetShown")
+        self._verbose = self._defaults.boolForKey_("verboseMode")   # default: clean
         self.widget = WidgetPanel.alloc().initWithDefaults_(self._defaults)
         self.statusItem = bar.statusItemWithLength_(NSVariableStatusItemLength)
         btn = self.statusItem.button()
@@ -131,7 +166,7 @@ class AppDelegate(NSObject):
         btn.setTarget_(self)
         btn.setAction_("togglePopover:")
         # gauge animation state: displayed needle vs polled target, per gauge
-        self._rows = []                                    # [(kind, text)] from the last poll
+        self._dials = []                                   # menubar_fmt.dial_for dicts, last poll
         self._new_frac = {}                                # fresh fracs from the bg fetch
         self._target = {k: None for k in GAUGES}           # last polled needle position
         self._disp = {k: 0.0 for k in GAUGES}              # currently drawn needle position
@@ -163,24 +198,45 @@ class AppDelegate(NSObject):
 
         mkbtn("↻ Reload", 8, 92, "reload:")
         mkbtn("Open in browser", 104, 150, "openBrowser:")
-        def mkcheck(title, action, on, x_shift):
+        # Centre group: the display toggles, then ? (how to read the dials).
+        group = []
+        for title, action, on in (("Zen", "toggleZen:", self._zen),
+                                  ("Widget", "toggleWidget:", self._widget_on),
+                                  ("Verbose", "toggleVerbose:", self._verbose)):
             c = NSButton.checkboxWithTitle_target_action_(title, self, action)
             c.setFont_(NSFont.systemFontOfSize_(12))
-            c.sizeToFit()
-            sz = c.frame().size
-            c.setFrameOrigin_(NSMakePoint((POPW - sz.width) / 2 + x_shift,
-                                          (HEADER_H - sz.height) / 2))
             c.setState_(1 if on else 0)
+            c.sizeToFit()
+            group.append(c)
+        self.helpBtn = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 21, 21))
+        self.helpBtn.setBezelStyle_(NSBezelStyleHelpButton)
+        self.helpBtn.setTitle_("")
+        self.helpBtn.setToolTip_("How to read the menu-bar dials")
+        self.helpBtn.setTarget_(self)
+        self.helpBtn.setAction_("showHelp:")
+        group.append(self.helpBtn)
+        SPACE = 16
+        x = (POPW - sum(c.frame().size.width for c in group) - SPACE * (len(group) - 1)) / 2
+        for c in group:
+            sz = c.frame().size
+            c.setFrameOrigin_(NSMakePoint(x, (HEADER_H - sz.height) / 2))
             header.addSubview_(c)
-            return c
-
-        mkcheck("Zen", "toggleZen:", self._zen, -46)
-        mkcheck("Widget", "toggleWidget:", self._widget_on, 30)
+            x += sz.width + SPACE
         mkbtn("Quit", POPW - 70, 62, "quit:")
         container.addSubview_(header)
 
         vc = NSViewController.alloc().init()
         vc.setView_(container)
+
+        # The ? popover: a small page that explains the dial.
+        hvc = NSViewController.alloc().init()
+        self.helpWeb = WKWebView.alloc().initWithFrame_configuration_(
+            NSMakeRect(0, 0, HELPW, HELPH), WKWebViewConfiguration.alloc().init())
+        hvc.setView_(self.helpWeb)
+        self.helpPop = NSPopover.alloc().init()
+        self.helpPop.setContentSize_((HELPW, HELPH))
+        self.helpPop.setBehavior_(NSPopoverBehaviorTransient)
+        self.helpPop.setContentViewController_(hvc)
 
         self.popover = NSPopover.alloc().init()
         self.popover.setContentSize_((POPW, POPH))
@@ -251,6 +307,20 @@ class AppDelegate(NSObject):
         self._defaults.synchronize()
         self.widget.show() if self._widget_on else self.widget.hide()
 
+    def toggleVerbose_(self, sender):
+        self._verbose = sender.state() != 0
+        self._defaults.setBool_forKey_(self._verbose, "verboseMode")
+        self._defaults.synchronize()
+        self._redraw()
+
+    def showHelp_(self, sender):
+        if self.helpPop.isShown():
+            self.helpPop.performClose_(None)
+            return
+        self.helpWeb.loadRequest_(NSURLRequest.requestWithURL_(
+            NSURL.URLWithString_(f"{BASE}/menubar-help")))
+        self.helpPop.showRelativeToRect_ofView_preferredEdge_(sender.bounds(), sender, NSMinYEdge)
+
     def toggleZen_(self, sender):
         self._zen = sender.state() != 0
         self._defaults.setBool_forKey_(self._zen, "zenMode")
@@ -265,9 +335,9 @@ class AppDelegate(NSObject):
                     d = json.load(r)
                 self._new_frac = {"claude": d.get("claude_frac") or 0.0,
                                   "codex": d.get("codex_frac") or 0.0}
-                self._rows = list(lines_for(d.get("latest"), d.get("codex")))
+                self._dials = dials_for(d.get("outlook"))
             except Exception:
-                self._new_frac, self._rows = {}, []
+                self._new_frac, self._dials = {}, []
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
                 "applyPoll:", None, False)
         threading.Thread(target=work, daemon=True).start()
@@ -316,7 +386,8 @@ class AppDelegate(NSObject):
 
     def _redraw(self):
         btn = self.statusItem.button()
-        img = render_menubar_image([(k, t, self._disp.get(k, 0.0)) for (k, t) in self._rows], self._bar_h, self._zen)
+        dials = [{**d, "frac": self._disp.get(d["kind"], 0.0)} for d in self._dials]
+        img = render_menubar_image(dials, self._bar_h, self._zen, self._verbose)
         if img is None:
             btn.setImage_(None)
             btn.setTitle_("—")

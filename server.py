@@ -23,6 +23,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning,
                         message=".*iscoroutinefunction")
 
 import ccost
+import outlook
 import changelog
 import codex_cost
 import claude_cli
@@ -270,6 +271,51 @@ class Hub:
         xf = min(1.0, xr / 8.0)                                   # needle pegs at 8 %/h
         return {"claude_rate": round(cr, 1), "codex_rate": round(xr, 1),
                 "claude_frac": round(cf, 3), "codex_frac": round(xf, 3)}
+
+    def outlook(self) -> dict:
+        """Per platform, what the menu bar's dial draws for the window it
+        headlines: % used, the reset, burn rate + dial fraction, and the
+        forecast at the reset from the dashboard's own model (outlook.py).
+        Cached until a new sample or a changed setting."""
+        shown = self.claude2_latest if self._shows_cli() else self.latest
+        codex = self.codex_latest
+        key = (shown and shown.get("ts"), codex and codex.get("ts"), self._shows_cli(),
+               self.forecast_model, self.forecast_model_codex, self.working_days)
+        if getattr(self, "_outlook_key", None) == key:
+            return self._outlook
+        rates = self.rates()
+        full_since = poller.now_ms() - HISTORY_FULL_DAYS * 86400 * 1000
+        hist = self.store.history_overview(full_since, HISTORY_BUCKET_MS) if self.store else []
+        days = [int(d) for d in self.working_days.split(",") if d != ""]
+
+        def one(col, pct, reset, win_s, model, rate, frac):
+            if pct is None:
+                return None
+            o = None
+            try:
+                o = outlook.window_outlook([{"t": r["ts"] / 1000, "y": r[col]} for r in hist],
+                                           pct, reset, win_s, model, days)
+            except Exception as e:                   # never let a forecast break the menu bar
+                print(f"[outlook] {col}: {e}", flush=True)
+            return {"pct": pct, "reset": reset, "window_s": win_s, "rate": rate, "frac": frac,
+                    "at_reset": o and o["at_reset"], "hit_ms": o and o["hit_ms"]}
+
+        out = {"claude": None, "codex": None}
+        if shown:
+            cli, res = self._shows_cli(), shown.get("resets") or {}
+            if shown.get("fh") is not None:          # the 5-hour, where the plan still has one
+                out["claude"] = one("kh" if cli else "fh", shown["fh"], res.get("five_hour"), 18000,
+                                    self.forecast_model, rates["claude_rate"], rates["claude_frac"])
+            else:
+                out["claude"] = one("kd" if cli else "sd", shown.get("sd"), res.get("seven_day"), 604800,
+                                    self.forecast_model, rates["claude_rate"], rates["claude_frac"])
+        week = next((w for w in (codex or {}).get("windows") or [] if w.get("label") == "7-day"), None)
+        if week:
+            out["codex"] = one("cs", week.get("used_percent"), week.get("reset_at"),
+                               week.get("window_seconds") or 604800, self.forecast_model_codex,
+                               rates["codex_rate"], rates["codex_frac"])
+        self._outlook_key, self._outlook = key, out
+        return out
 
     async def check_update(self) -> dict:
         """Run the release check immediately (used by the 'Check for updates'
@@ -580,10 +626,19 @@ async def widget():
     return FileResponse(os.path.join(STATIC, "widget.html"), headers=NO_CACHE)
 
 
+@app.get("/menubar-help")
+async def menubar_help():
+    """What the menu bar's ? shows: how to read the dials."""
+    return FileResponse(os.path.join(STATIC, "menubar-help.html"), headers=NO_CACHE)
+
+
 @app.get("/api/latest")
 async def api_latest():
     # "latest" is what the menu bar shows: whichever Claude the switch is on.
+    loop = asyncio.get_running_loop()
+    ol = await loop.run_in_executor(None, hub.outlook)
     return JSONResponse({"latest": hub.claude2_latest if hub._shows_cli() else hub.latest,
+                         "outlook": ol,
                          "claude": hub.latest,
                          "claude2": hub.claude2_latest,
                          "codex": hub.codex_latest,

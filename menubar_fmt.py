@@ -112,3 +112,56 @@ def lines_for(claude: dict | None, codex: dict | None,
     if cx is not None:
         out.append(("codex", cx))
     return out
+
+
+def _dur(sec: float) -> str:
+    """Compact duration: '46m', '2.3h', '1.5d'."""
+    sec = max(0.0, sec)
+    if sec < 3600:
+        return f"{round(sec / 60)}m"
+    if sec < 48 * 3600:
+        return f"{sec / 3600:.1f}".rstrip("0").rstrip(".") + "h"
+    return f"{sec / 86400:.1f}".rstrip("0").rstrip(".") + "d"
+
+
+def _rate(r) -> str:
+    if r is None:
+        return "–"
+    return f"{r:.1f}".rstrip("0").rstrip(".") if r < 10 else f"{round(r)}"
+
+
+def dial_for(kind: str, o: dict | None, now: datetime.datetime | None = None) -> dict | None:
+    """One menu-bar dial from a server outlook entry (see Hub.outlook): what the
+    arc and needle draw, plus the text beside it. Clean mode shows only `clean`
+    (time to reset); verbose shows `top` over `bottom`. None when no data."""
+    if not o or o.get("pct") is None:
+        return None
+    pct = float(o["pct"])
+    reset = o.get("reset")
+    left = time_until(reset, now=now) or "–"
+    hit = o.get("hit_ms")
+    at = o.get("at_reset")
+    early = None
+    if hit is not None and reset:
+        try:
+            r = datetime.datetime.fromisoformat(reset).timestamp() * 1000
+            early = _dur((r - hit) / 1000)
+        except (ValueError, TypeError):
+            early = None
+    over = hit is not None
+    at_reset = 100.0 if over else max(pct, float(at)) if at is not None else pct
+    bottom = f"{_rate(o.get('rate'))}/h · " + (
+        f"out {early} early" if over and early else f"{max(0, round(100 - at_reset))}% left")
+    return {"kind": kind, "pct": pct, "at_reset": at_reset, "over": over,
+            "frac": float(o.get("frac") or 0.0),
+            "clean": left, "top": f"{round(pct)}% · {left}", "bottom": bottom}
+
+
+def dials_for(outlook: dict | None, now: datetime.datetime | None = None) -> list[dict]:
+    """The menu bar's dials, Claude then Codex, skipping a platform with no data."""
+    out = []
+    for kind in ("claude", "codex"):
+        d = dial_for(kind, (outlook or {}).get(kind), now)
+        if d is not None:
+            out.append(d)
+    return out

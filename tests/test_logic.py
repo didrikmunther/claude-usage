@@ -660,3 +660,24 @@ def test_offline_backfill_takes_runs_where_both_providers_went_empty():
         s._db.commit()
         assert Store(path).offline_spans() == [[2, 3]]
         assert Store(path).offline_spans() == [[2, 3]]   # once, not again per start
+
+
+def test_dial_for_menu_bar():
+    from menubar_fmt import dial_for, dials_for
+    now = _BASE
+    reset = (now + datetime.timedelta(hours=34.2)).isoformat()
+    calm = dial_for("claude", {"pct": 53, "reset": reset, "rate": 0.3, "frac": 0.04,
+                               "at_reset": 63, "hit_ms": None}, now)
+    assert (calm["clean"], calm["top"], calm["bottom"]) == ("34.2h", "53% · 34.2h", "0.3/h · 37% left")
+    assert calm["at_reset"] == 63 and not calm["over"]
+    # Runs out 46 minutes before a reset 3.1h away: the arc fills to 100, in the warning style.
+    soon = now + datetime.timedelta(hours=3.1)
+    hit = (soon - datetime.timedelta(minutes=46)).timestamp() * 1000
+    crunch = dial_for("claude", {"pct": 78, "reset": soon.isoformat(), "rate": 9.4, "frac": 1.0,
+                                 "at_reset": 100, "hit_ms": hit}, now)
+    assert crunch["over"] and crunch["at_reset"] == 100.0
+    assert crunch["bottom"] == "9.4/h · out 46m early"
+    # No forecast yet (just reset): the faint arc collapses onto what's used.
+    assert dial_for("codex", {"pct": 20, "reset": reset, "rate": 0.1}, now)["at_reset"] == 20.0
+    assert dials_for({"claude": None, "codex": {"pct": 20, "reset": reset}}, now)[0]["kind"] == "codex"
+    assert dials_for(None) == []
