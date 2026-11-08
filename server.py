@@ -259,9 +259,13 @@ class Hub:
         if not self.store:
             return {"claude_rate": 0.0, "codex_rate": 0.0, "claude_frac": 0.0, "codex_frac": 0.0}
         hist = self.store.history(since_ms=poller.now_ms() - 36 * 3600 * 1000)  # ≥ longest lookback (12× 2.8h)
-        ck = "kh" if self._shows_cli() else "fh"                  # the switched-to Claude
-        cr = burn_rate(hist, ck, lookback_ms=5 * 60 * 1000)       # Claude: 5-hour on a 0–100 dial
-        cf = min(1.0, cr / 100.0)                                 # needle pegs at 100 %/h
+        ck, wk = ("kh", "kd") if self._shows_cli() else ("fh", "sd")   # the switched-to Claude
+        if hist and hist[-1].get(ck) is not None:
+            cr = burn_rate(hist, ck, lookback_ms=5 * 60 * 1000)   # Claude: 5-hour on a 0–100 dial
+            cf = min(1.0, cr / 100.0)                             # needle pegs at 100 %/h
+        else:                                                     # no 5-hour limit on this plan:
+            cr = burn_rate(hist, wk, lookback_ms=168 * 60 * 1000)  # the 7-day, on Codex's 0–8 dial
+            cf = min(1.0, cr / 8.0)
         xr = burn_rate(hist, "cs", lookback_ms=168 * 60 * 1000)   # Codex: 7-day on a 0–8 dial
         xf = min(1.0, xr / 8.0)                                   # needle pegs at 8 %/h
         return {"claude_rate": round(cr, 1), "codex_rate": round(xr, 1),

@@ -99,6 +99,12 @@ def test_title_for():
     assert title_for({"fh": 35.0, "resets": {}}, now=_BASE) == "35%"   # no reset -> pct only
     assert title_for({"fh": None}) == "—"
     assert title_for(None) == "—"
+    # No 5-hour limit (Ultra): the API sends five_hour null; show the weekly.
+    week = (_BASE + datetime.timedelta(hours=105.6)).isoformat()
+    ultra = {"fh": None, "sd": 53.0, "resets": {"five_hour": None, "seven_day": week}}
+    assert title_for(ultra, now=_BASE) == "53%4.4d"
+    from menubar_fmt import claude_line
+    assert claude_line(ultra, now=_BASE) == "53% · 4.4d"
 
 
 def test_parse_version():

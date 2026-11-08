@@ -23,13 +23,32 @@ def hours_until(iso: str | None, now: datetime.datetime | None = None) -> str | 
     return f"{h:.1f}".rstrip("0").rstrip(".")
 
 
+def _claude_headline(claude: dict | None) -> tuple[float, str | None, bool] | None:
+    """(percent, reset iso, is_five_hour) for the window the menu bar shows:
+    the 5-hour one, or the 7-day one on plans that no longer have a 5-hour
+    limit (the API then reports five_hour as null)."""
+    if not claude:
+        return None
+    resets = claude.get("resets") or {}
+    if claude.get("fh") is not None:
+        return claude["fh"], resets.get("five_hour"), True
+    if claude.get("sd") is not None:
+        return claude["sd"], resets.get("seven_day"), False
+    return None
+
+
 def title_for(latest: dict | None, now: datetime.datetime | None = None) -> str:
-    """Menu-bar title, e.g. '35%4.1h'. Falls back to '—' when no data."""
-    if not latest or latest.get("fh") is None:
+    """Menu-bar title, e.g. '35%4.1h' (or '53%1.4d' on the weekly). '—' when no data."""
+    w = _claude_headline(latest)
+    if w is None:
         return "—"                                 # em-dash: no data
-    p = f"{round(latest['fh'])}%"
-    h = hours_until((latest.get("resets") or {}).get("five_hour"), now=now)
-    return f"{p}{h}h" if h is not None else p
+    v, iso, five = w
+    p = f"{round(v)}%"
+    if five:
+        h = hours_until(iso, now=now)
+        return f"{p}{h}h" if h is not None else p
+    t = time_until(iso, now=now)
+    return f"{p}{t}" if t else p
 
 
 def time_until(iso: str | None, now: datetime.datetime | None = None) -> str | None:
@@ -48,11 +67,14 @@ def time_until(iso: str | None, now: datetime.datetime | None = None) -> str | N
 
 
 def claude_line(claude: dict | None, now: datetime.datetime | None = None) -> str | None:
-    """Claude's 5-hour headline, e.g. '35% · 4.1h'. None when no data."""
-    if not claude or claude.get("fh") is None:
+    """Claude's headline, e.g. '35% · 4.1h' — the 5-hour window, or the 7-day
+    one where there is no 5-hour limit. None when no data."""
+    w = _claude_headline(claude)
+    if w is None:
         return None
-    p = f"{round(claude['fh'])}%"
-    t = time_until((claude.get("resets") or {}).get("five_hour"), now=now)
+    v, iso, _ = w
+    p = f"{round(v)}%"
+    t = time_until(iso, now=now)
     return f"{p} · {t}" if t else p
 
 

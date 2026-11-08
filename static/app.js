@@ -350,6 +350,7 @@ function panelResets(st) {
 // is the visible window (Infinity = full). The model always trains on the FULL
 // history — the range only controls how much history is shown and how far ahead
 // the forecast is drawn — so the prediction is stable across range switches.
+const ENDED_SEC = 3600;   // no sample for this long: the window is gone, not just a missed poll
 function withProjection(tsFull, aFull, bFull, rst, model) {
   const nFull = tsFull.length;
   const now = nFull ? tsFull[nFull - 1] : 0;
@@ -366,10 +367,17 @@ function withProjection(tsFull, aFull, bFull, rst, model) {
   const step = 3600;
   const P = Predictors[model] || Predictors.linear;
 
-  const rA = P.predict(toSamples(tsFull, aFull), { now, horizon, step, reset: rst && rst.a, workDays: workingDays });
+  // A window that stopped reporting (Claude's 5-hour on plans that dropped it)
+  // has nothing to forecast: its old history would keep drawing a projection.
+  const ended = (ys) => {
+    for (let i = nFull - 1; i >= 0; i--) if (ys[i] != null) return now - tsFull[i] > ENDED_SEC;
+    return true;
+  };
+  const rA = ended(aFull) ? { points: null }
+    : P.predict(toSamples(tsFull, aFull), { now, horizon, step, reset: rst && rst.a, workDays: workingDays });
   const projA = rA.points, loA = rA.lo || null, hiA = rA.hi || null;
   let projB, loB = null, hiB = null;
-  const ratio = consumptionRatio(aFull, bFull);
+  const ratio = projA ? consumptionRatio(aFull, bFull) : null;
   if (ratio != null && !rA.lo) {
     // Point-only models: derive the 7-day (b) from the 5-hour (a) projection when
     // linked by a stable consumption ratio.
@@ -440,7 +448,10 @@ function renderConsumed() {
     const el = $(t.el);
     if (!el) continue;
     const res = consumedInRange(t.st);
-    const parts = t.series.map((sp) => {
+    // No 5-hour limit on this plan: its "used" total would only ever read +0%.
+    const series = CLAUDES.includes(t.st) && t.st.last && !hasFiveHour(t.st)
+      ? t.series.filter((sp) => sp.i !== 0) : t.series;
+    const parts = series.map((sp) => {
       const r = res[sp.i];
       return r && r.n > 1 ? `<b style="color:var(${sp.col})">${sp.lbl} +${Math.round(r.sum)}%</b>` : null;
     }).filter(Boolean);
@@ -543,6 +554,12 @@ function renderClaude(st, s) {
   if (st === K) showClaude2();
   const sl = scopedLimit(st);
   const wk = sl ? sl.percent : s.sd;
+  // Plans without a 5-hour limit (Ultra, since Nov 2026) get five_hour: null.
+  const five = hasFiveHour(st), col = $(st.p + "fhFill").closest(".col");
+  $(st.p + "fhFill").closest(".bar-row").style.display = five ? "" : "none";
+  const lg = col && col.querySelector(".legend .swatch.fh");
+  if (lg) lg.parentElement.style.display = five ? "" : "none";
+  if (X.last && X.ghostFor !== claudeHasFiveHour()) renderCodex(X.last);   // re-align its rows
   $(st.p + "fhFill").style.width = (s.fh ?? 0) + "%";
   $(st.p + "sdFill").style.width = (wk ?? 0) + "%";
   $(st.p + "fhPct").textContent = fmtPct(s.fh);
@@ -552,6 +569,16 @@ function renderClaude(st, s) {
   renderScoped(st, s.limits);
   renderClaudeResets(st);
   renderClaudeForecast(st);
+}
+
+// Whether this account still has a 5-hour limit. Without one the API reports
+// five_hour as null, and the 7-day window is the only one that can stop you.
+function hasFiveHour(st) {
+  return !!(st.last && (st.last.fh != null || (st.resets && st.resets.five_hour)));
+}
+
+function claudeHasFiveHour() {
+  return [C, K].some((st) => st.last && hasFiveHour(st));
 }
 
 // Desktop and CLI both signed in: one column at a time, picked by the Desktop | CLI switch
@@ -715,10 +742,13 @@ function renderCodex(s) {
       <div class="pct">${fmtPct(w.used_percent)}</div>
     </div>`;
   const usedW = new Set();
+  X.ghostFor = claudeHasFiveHour();
   let barsHtml = CX_SLOTS.map((slot) => {
     const w = wins.find((x) => x.label === slot.label);
     if (w) { usedW.add(w); return barFor(w, slot.cls); }
-    return GHOST_BAR;                                   // keep the slot's height
+    // Keep the slot's height so the rows line up with Claude's, but only while
+    // Claude has a row there: without a 5-hour limit its 7-day sits on top.
+    return slot.label === "5-hour" && !claudeHasFiveHour() ? "" : GHOST_BAR;
   }).join("");
   wins.filter((w) => !usedW.has(w)).forEach((w) => barsHtml += barFor(w, "cx1"));  // any odd window
   $("cxBars").innerHTML = barsHtml;
@@ -906,14 +936,25 @@ function makeOverview(elId, series) {
   return new uPlot(opts, empty, el);
 }
 
-function paintWindow(st) {
+// The window as drawn, in px. A 24h view over months of history is only a few
+// pixels across: too small to see or grab, so it's drawn at least OV_MIN_PX
+// wide, centred on the real range.
+const OV_MIN_PX = 16;
+function windowBox(st) {
   const u = st.ov, v = viewOf(st);
-  if (!u || !st.ovWin) return;
-  st.ovWin.hidden = !v;
-  if (!v) return;
+  if (!u || !v) return null;
   const l = u.valToPos(v.min, "x"), r = u.valToPos(v.max, "x");
-  st.ovWin.style.left = l + "px";
-  st.ovWin.style.width = Math.max(2, r - l) + "px";
+  const c = (l + r) / 2, half = Math.max((r - l) / 2, OV_MIN_PX / 2);
+  return { l: c - half, r: c + half };
+}
+
+function paintWindow(st) {
+  if (!st.ovWin) return;
+  const b = windowBox(st);
+  st.ovWin.hidden = !b;
+  if (!b) return;
+  st.ovWin.style.left = b.l + "px";
+  st.ovWin.style.width = b.r - b.l + "px";
 }
 
 // Set the provider's window to [min, max], kept inside history + forecast.
@@ -949,12 +990,16 @@ function attachNavigator(st) {
   const EDGE = 6;                                   // px either side of an edge that grabs it
   const xAt = (e) => e.clientX - u.over.getBoundingClientRect().left;
   const hit = (x) => {
-    const v = viewOf(st);
-    if (!v) return null;
-    const l = u.valToPos(v.min, "x"), r = u.valToPos(v.max, "x");
-    if (Math.abs(x - l) <= EDGE) return "l";
-    if (Math.abs(x - r) <= EDGE) return "r";
-    return x > l && x < r ? "move" : "jump";
+    const b = windowBox(st);
+    if (!b) return null;
+    // The middle always moves it: on a narrow box the edge zones would
+    // otherwise cover all of it, and grabbing it would resize instead. The
+    // edges then reach outward, so a narrow window can still be resized.
+    const inner = Math.min(EDGE, (b.r - b.l) / 4);
+    if (x >= b.l + inner && x <= b.r - inner) return "move";
+    if (Math.abs(x - b.l) <= EDGE) return "l";
+    if (Math.abs(x - b.r) <= EDGE) return "r";
+    return "jump";
   };
   const CURSOR = { l: "ew-resize", r: "ew-resize", move: "grab", jump: "pointer" };
   let drag = null;
@@ -1535,8 +1580,11 @@ function updateGauges() {
   const now = Date.now() / 1000;
   for (const [g, st] of [[claudeGauge, C], [claude2Gauge, K]]) {
     if (!g) continue;
-    const r = burnRate(st.data[0], st.data[1], now, 5 * 60);   // 5-hour rate
-    g.update(r, CLAUDE_MAX, 5);
+    if (!st.last || hasFiveHour(st)) {
+      g.update(burnRate(st.data[0], st.data[1], now, 5 * 60), CLAUDE_MAX, 5);   // 5-hour rate
+    } else {                                                   // weekly only: read it like Codex's
+      g.update(burnRate(st.data[0], st.data[2], now, 168 * 60), CODEX_MAX, 168);
+    }
   }
   if (codexGauge) {
     const b = bindingBurn(X.data, now, WIN_CODEX);           // 7-day rate + lookback
