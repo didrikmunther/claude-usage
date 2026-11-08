@@ -177,6 +177,12 @@ class AppDelegate(NSObject):
         container = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, POPW, POPH))
 
         conf = WKWebViewConfiguration.alloc().init()
+        # A closed popover hides the page, and WebKit then suspends its process:
+        # waking it took seconds on the next open. Keep it awake; the page itself
+        # does no work while hidden (see tick() in app.js), so this costs nothing.
+        prefs = conf.preferences()
+        if prefs.respondsToSelector_("_setPageVisibilityBasedProcessSuppressionEnabled:"):
+            prefs._setPageVisibilityBasedProcessSuppressionEnabled_(False)
         self.web = WKWebView.alloc().initWithFrame_configuration_(
             NSMakeRect(0, 0, POPW, POPH - HEADER_H), conf)
         self.web.setNavigationDelegate_(self)      # retry if the server isn't up yet

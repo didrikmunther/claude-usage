@@ -2,6 +2,10 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- The charts have two more ranges: 2 weeks and Month, next to 24h, Week and Full.
+- Clicking the menu bar opens the panel much faster after it has been closed for a while: it used to take a few seconds.
+
 ## [0.23.0] - 2026-11-08
 - New usage meters on the dashboard, one per limit. Each bar shows how much you've used, what you'd add in the next hour at your current pace, the rest of the forecast to the reset (red if you'll run out first) and what's left, and it smokes when you're burning through it fast. Hover over any part of the bar for the details and a short explanation. The reset countdown sits above it, on the right. This replaces the old bars and the separate burn-rate gauge.
 - The forecast card is gone: its forecast is on the meter now, and you pick the forecast model by hovering over the forecast part of the meter. The "used" total and the legend next to each chart are gone too.

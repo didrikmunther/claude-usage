@@ -15,7 +15,7 @@ let bounds = { min: 10, max: 3600 };
 // full-detail stretches back in, and new samples keep arriving.
 const MAX_POINTS = 100000;
 
-const RANGES = { "24h": 24 * 3600, "7d": 7 * 24 * 3600, full: Infinity };
+const RANGES = { "24h": 24 * 3600, "7d": 7 * 24 * 3600, "14d": 14 * 24 * 3600, "30d": 30 * 24 * 3600, full: Infinity };
 // Claude and Codex each keep their own range and forecast model: C and K are
 // Claude, X is Codex.
 const provOf = (st) => (st === X ? "codex" : "claude");
@@ -287,9 +287,16 @@ function viewOf(st) {
   return { min: now - back, max: now + Math.min(AHEAD_MAX, back / 3) };
 }
 
+// The Claude columns on screen: one of Desktop | CLI shows at a time, and the
+// hidden one is skipped (its chart, forecast cone and meters) until it shows.
+function shownClaudes() {
+  return CLAUDES.filter((st) => { const col = $(st.p + "colClaude"); return !col || !col.hidden; });
+}
+
 // Recompute history + forecast and draw it, at the current view.
 function applyRange(st) {
   if (!st.chart) return;
+  if (CLAUDES.includes(st) && !shownClaudes().includes(st)) return;
   const data = withProjection(st.data[0], st.data[1], st.data[2], panelResets(st), modelOf(st));
   st.chart.setData(data, false);
   if (st.ov) {
@@ -534,8 +541,11 @@ function showClaude2() {
 
 function paintAcct() {
   const cli = K.shown && acct === "cli";
+  const was = shownClaudes();
   $("colClaude").hidden = cli;
   $("k_colClaude").hidden = !cli;
+  // The column coming into view was skipped while hidden: bring it up to date.
+  for (const st of shownClaudes()) if (!was.includes(st)) { applyRange(st); renderClaudeForecast(st); }
   document.querySelectorAll('.seg[data-sync="acct"] button').forEach((b) =>
     b.classList.toggle("on", b.dataset.a === acct));
 }
@@ -875,7 +885,7 @@ function paintWindow(st) {
 
 // What the chart is showing, under the strip: the preset's name, or after a drag
 // the dates it spans.
-const SPAN_NAMES = { "24h": "Last 24 hours", "7d": "Last 7 days" };
+const SPAN_NAMES = { "24h": "Last 24 hours", "7d": "Last 7 days", "14d": "Last 2 weeks", "30d": "Last 30 days" };
 function paintSpan(st) {
   const el = $(st === X ? "cxChartSpan" : st.p + "chartSpan"), v = viewOf(st);
   if (!el || !v) return;
@@ -1613,7 +1623,7 @@ function reveal() {
 window.showLatest = async () => {
   document.body.classList.add("still");
   await resync();
-  for (const st of CLAUDES) renderClaudeForecast(st);
+  for (const st of shownClaudes()) renderClaudeForecast(st);
   renderCodexForecast();
   updateGauges();
   lastTick = Date.now();                  // the pause is handled: don't resync again
@@ -1783,10 +1793,13 @@ const PAUSE_GAP_MS = 5000;   // a 1s ticker that skipped this long was paused
 let lastTick = Date.now();
 
 function tick() {
+  // Hidden (a closed menu-bar panel, a background tab): do nothing. The first tick
+  // after it shows again sees the gap and catches up, as after a real pause.
+  if (document.hidden) return;
   const now = Date.now(), paused = now - lastTick > PAUSE_GAP_MS;
   lastTick = now;
   if (paused) resync(); else checkStale();
-  for (const st of CLAUDES) { renderClaudeResets(st); renderClaudeForecast(st); }
+  for (const st of shownClaudes()) { renderClaudeResets(st); renderClaudeForecast(st); }
   document.querySelectorAll("#colCodex [data-reset]").forEach((el) => {
     el.textContent = countdown(el.dataset.reset);
   });
