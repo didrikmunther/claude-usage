@@ -97,6 +97,15 @@ launchctl bootout   gui/$(id -u)/com.claude-usage.server       # stop server
 tail -f ~/.claude-usage/server.log ~/.claude-usage/menubar.log # logs
 ```
 
+The menu bar has a separate watchdog that checks progress on the UI thread.
+After 60 seconds without a heartbeat (120 seconds during startup), it captures
+a native stack sample and exits the stuck UI so the existing LaunchAgent can
+restart it. Sleep/wake and clock changes get a fresh grace period, and menu
+tracking keeps the heartbeat running. The Mac can still sleep normally.
+Recovery messages go to `~/.claude-usage/menubar.err.log`; the last three stack
+samples stay locally in `~/.claude-usage/diagnostics/`. The dashboard server and
+usage history continue independently during a menu-bar restart.
+
 Run in the foreground for development:
 
 ```bash
@@ -104,6 +113,13 @@ Run in the foreground for development:
 .venv/bin/python poller.py      # print one live Claude sample
 .venv/bin/python codex_poller.py# print one live Codex sample
 .venv/bin/pytest tests/         # pure-logic tests (no Keychain/network)
+```
+
+The optional native liveness check uses isolated AppKit processes and deliberately
+blocks their main thread; it does not freeze the installed app:
+
+```bash
+CLAUDE_USAGE_GUI_TESTS=1 .venv/bin/python -m pytest tests/test_menubar_watchdog.py -q
 ```
 
 ## Updating

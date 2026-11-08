@@ -22,10 +22,14 @@ from AppKit import (
     NSMinYEdge, NSImage, NSImageOnly, NSColor, NSBezierPath,
     NSFontAttributeName, NSForegroundColorAttributeName,
 )
-from Foundation import NSObject, NSURL, NSURLRequest, NSAttributedString, NSUserDefaults
+from Foundation import (
+    NSObject, NSURL, NSURLRequest, NSAttributedString, NSUserDefaults,
+    NSProcessInfo, NSActivityUserInitiatedAllowingIdleSystemSleep,
+)
 from WebKit import WKWebView, WKWebViewConfiguration
 
 from menubar_fmt import lines_for
+from menubar_watchdog import HangWatchdog, start_main_thread_heartbeat
 from widget_panel import WidgetPanel
 
 PORT = int(os.environ.get("CLAUDE_USAGE_PORT", "44405"))
@@ -323,11 +327,26 @@ class AppDelegate(NSObject):
 
 
 def main():
-    app = NSApplication.sharedApplication()
-    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)  # no Dock icon
-    delegate = AppDelegate.alloc().init()
-    app.setDelegate_(delegate)
-    app.run()
+    watchdog = HangWatchdog()
+    timer, activity = None, None
+    try:
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)  # no Dock icon
+        # App Nap must not suppress the liveness timer for this live readout.
+        # This activity explicitly allows the Mac to idle-sleep as usual.
+        activity = NSProcessInfo.processInfo().beginActivityWithOptions_reason_(
+            NSActivityUserInitiatedAllowingIdleSystemSleep,
+            "Keep the live usage menu bar responsive")
+        timer = start_main_thread_heartbeat(watchdog)
+        delegate = AppDelegate.alloc().init()
+        app.setDelegate_(delegate)
+        app.run()
+    finally:
+        if timer is not None:
+            timer.invalidate()
+        if activity is not None:
+            NSProcessInfo.processInfo().endActivity_(activity)
+        watchdog.close()
 
 
 if __name__ == "__main__":
