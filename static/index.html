@@ -40,55 +40,36 @@
         </div>
 
         <div class="usage-row">
-          <section class="bars">
-            <div class="bar-row">
-              <div class="bar-label">5-hour<span id="fhReset" class="reset muted"></span></div>
-              <div class="track"><div id="fhFill" class="fill fh"></div></div>
-              <div id="fhPct" class="pct">–</div>
+          <div class="meter-cell" id="fhCell">
+            <div class="meter-wrap" id="fhMeter"></div>
+            <div class="meter-txt">
+              <span id="fhReset" class="reset muted"></span>
+              <span id="fhFc" class="dial-sub muted"></span>
             </div>
-            <div class="bar-row">
-              <div class="bar-label"><span id="sdLabel">7-day</span><span id="sdReset" class="reset muted"></span></div>
-              <div class="track"><div id="sdFill" class="fill sd"></div></div>
-              <div id="sdPct" class="pct">–</div>
+          </div>
+          <div class="meter-cell" id="sdCell">
+            <div class="meter-wrap" id="sdMeter"></div>
+            <div class="meter-txt">
+              <span id="sdReset" class="reset muted"></span>
+              <span id="sdFc" class="dial-sub muted"></span>
             </div>
-          </section>
-          <div class="gauge"><div class="gauge-cap">burn rate</div><div id="claudeGauge"></div></div>
+          </div>
         </div>
 
         <section class="card chart-card">
-          <div class="chart-head">
-            <div class="seg" data-p="claude" data-sync="range">
+          <div id="chart"></div>
+          <div id="chartOv" class="chart-ov" title="Drag to move through time, drag the edges to zoom"></div>
+          <div class="range-row">
+            <span id="chartSpan" class="range-span"></span>
+            <div class="range-presets" data-p="claude" data-sync="range">
               <button data-r="24h">24h</button>
               <button data-r="7d">Week</button>
               <button data-r="full">Full</button>
             </div>
-            <div class="legend-col">
-              <span class="legend">
-                <span class="lg"><i class="swatch fh"></i>5-hour</span>
-                <span class="lg"><i class="swatch sd"></i>7-day</span>
-              </span>
-              <span id="consumed" class="consumed"></span>
-            </div>
           </div>
-          <div id="chart"></div>
-          <div id="chartOv" class="chart-ov" title="Drag to move through time, drag the edges to zoom"></div>
         </section>
 
-        <section class="card prog-card">
-          <div class="prog-head">
-            <span class="muted">forecast</span>
-            <div class="seg seg-sm" data-p="claude" data-sync="model">
-              <button data-m="adaptive">Adaptive</button>
-              <button data-m="linear">Linear</button>
-              <button data-m="cycle">Cycle</button>
-              <button data-m="cycle+tod">Cycle+day</button>
-              <button data-m="analog">Analog</button>
-            </div>
-          </div>
-          <div id="prog" class="prog"><div class="prog-row muted"><span class="prog-msg">gathering data…</span></div></div>
-        </section>
 
-        <section id="scoped" class="scoped"></section>
       </section>
 
       <!-- ===================== CODEX ===================== -->
@@ -100,39 +81,35 @@
         </div>
 
         <div class="usage-row">
-          <section id="cxBars" class="bars"></section>
-          <div class="gauge"><div class="gauge-cap">burn rate</div><div id="codexGauge"></div></div>
+          <div class="meter-cell" id="cx5Cell">
+            <div class="meter-wrap" id="cx5Meter"></div>
+            <div class="meter-txt">
+              <span id="cx5Reset" data-reset="" class="reset muted"></span>
+              <span id="cx5Fc" class="dial-sub muted"></span>
+            </div>
+          </div>
+          <div class="meter-cell" id="cx7Cell">
+            <div class="meter-wrap" id="cx7Meter"></div>
+            <div class="meter-txt">
+              <span id="cx7Reset" data-reset="" class="reset muted"></span>
+              <span id="cx7Fc" class="dial-sub muted"></span>
+            </div>
+          </div>
         </div>
 
         <section class="card chart-card">
-          <div class="chart-head">
-            <div class="seg" data-p="codex" data-sync="range">
+          <div id="cxChart"></div>
+          <div id="cxChartOv" class="chart-ov" title="Drag to move through time, drag the edges to zoom"></div>
+          <div class="range-row">
+            <span id="cxChartSpan" class="range-span"></span>
+            <div class="range-presets" data-p="codex" data-sync="range">
               <button data-r="24h">24h</button>
               <button data-r="7d">Week</button>
               <button data-r="full">Full</button>
             </div>
-            <div class="legend-col">
-              <span id="cxLegend" class="legend"></span>
-              <span id="cxConsumed" class="consumed"></span>
-            </div>
           </div>
-          <div id="cxChart"></div>
-          <div id="cxChartOv" class="chart-ov" title="Drag to move through time, drag the edges to zoom"></div>
         </section>
 
-        <section class="card prog-card">
-          <div class="prog-head">
-            <span class="muted">forecast</span>
-            <div class="seg seg-sm" data-p="codex" data-sync="model">
-              <button data-m="adaptive">Adaptive</button>
-              <button data-m="linear">Linear</button>
-              <button data-m="cycle">Cycle</button>
-              <button data-m="cycle+tod">Cycle+day</button>
-              <button data-m="analog">Analog</button>
-            </div>
-          </div>
-          <div id="cxProg" class="prog"><div class="prog-row muted"><span class="prog-msg">gathering data…</span></div></div>
-        </section>
 
         <section id="cxScoped" class="scoped"></section>
       </section>

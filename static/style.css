@@ -171,42 +171,61 @@ table.acc-tbl tr.active td:first-child::after { content: " · in use"; color: va
   .updatebar { background: #1e1b4b; color: #c7d2fe; border-color: #3730a3; }
 }
 
-/* usage bars + burn-rate gauge side by side */
-.usage-row { display: flex; align-items: center; gap: 18px; margin-bottom: 28px; }
-.usage-row .bars { flex: 1; margin-bottom: 0; }
-.gauge { width: 148px; flex-shrink: 0; text-align: center; }
-.gauge-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 1px; }
-/* visible: steam rises past the top of the viewBox, over the caption */
-.gauge-svg { width: 100%; height: auto; display: block; overflow: visible; }
-.gauge-val { fill: var(--ink); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
-/* steam vented from the gauge while it's over the max */
-.steam-puff { transform-box: fill-box; transform-origin: center; animation: steam 1.9s ease-out forwards; }
-@keyframes steam {
-  0%   { opacity: 0; transform: translate(0, 0) scale(0.6); }
+/* usage meters: one per window. A bar in three blocks (used, the forecast to the
+   reset, what's left at the reset) with the burn rate inside; each block has a
+   tooltip. The countdown sits to the right of the bar's base. */
+.usage-row { display: grid; gap: 22px; margin: 22px 0 32px; }
+.meter-cell { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.meter-cell.placeholder { visibility: hidden; }
+.meter-wrap { position: relative; min-width: 0; }
+.meter { position: relative; display: flex; gap: 2px; height: 26px; }
+.m-seg { position: relative; display: flex; align-items: center; justify-content: flex-end; min-width: 0;
+  overflow: hidden; cursor: default; transition: width .6s cubic-bezier(.2,.7,.2,1); }
+.m-seg.empty { display: none; }
+.m-used { background: var(--m); }
+.m-rate { background: color-mix(in srgb, var(--m) 68%, transparent); }
+.m-fc { background: color-mix(in srgb, var(--m) 30%, transparent); }
+.m-fc.over { background: color-mix(in srgb, #e5484d 70%, transparent); }
+.m-left { background: var(--line); }
+/* whichever blocks touch the ends keep the bar's rounded corners */
+.m-seg.first { border-top-left-radius: 7px; border-bottom-left-radius: 7px; }
+.m-seg.last { border-top-right-radius: 7px; border-bottom-right-radius: 7px; }
+.m-seg:hover, .m-seg:focus-visible { filter: brightness(1.08); outline: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ink) 35%, transparent); }
+.m-lbl { padding: 0 7px; font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink); pointer-events: none; }
+.m-used .m-lbl, .m-rate .m-lbl { color: #fff; }
+.light-m .m-used .m-lbl, .light-m .m-rate .m-lbl { color: #1f2328; }
+.m-seg.tight .m-lbl { visibility: hidden; }
+/* smoke off a fast burn */
+.m-smoke { position: absolute; inset: 0 0 auto 0; height: 0; pointer-events: none; }
+.m-smoke i { position: absolute; top: -4px; width: 14px; height: 14px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(156,163,175,.85), rgba(156,163,175,.35) 55%, rgba(156,163,175,0) 72%);
+  filter: blur(1.5px); animation: smoke 1.9s ease-out forwards; }
+@keyframes smoke {
+  0%   { opacity: 0; transform: translate(0, 0) scale(.6); }
   20%  { opacity: .8; }
-  100% { opacity: 0; transform: translate(var(--dx, 0), -26px) scale(2.8); }
+  100% { opacity: 0; transform: translate(var(--dx, 0), -30px) scale(2.6); }
 }
-@media (max-width: 480px) { .usage-row { flex-direction: column; align-items: stretch; } .gauge { width: 100%; max-width: 180px; margin: 0 auto; } }
+.m-tip { position: absolute; bottom: calc(100% + 8px); z-index: 6; width: max-content; max-width: min(280px, 100%);
+  pointer-events: none; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px; line-height: 1.4; box-shadow: 0 6px 20px -6px rgba(16,24,40,.28); }
+.m-tip.below { bottom: auto; top: calc(100% + 8px); }
+.m-tip .tip-t { font-weight: 600; margin-bottom: 2px; font-variant-numeric: tabular-nums; }
+.m-tip .tip-x { color: var(--muted); }
+/* the forecast's tooltip holds the model picker, so it takes the pointer */
+.m-tip.interactive { pointer-events: auto; max-width: min(360px, 100%); }
+.m-tip .m-models { margin-top: 8px; display: flex; flex-wrap: wrap; }
+/* above the bar, on the right: the countdown, and any warning */
+.meter-txt { order: -1; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 2px 12px; }
+.meter-txt .reset { display: inline; font-size: 12px; margin-top: 0; }
+.meter-txt > :empty { display: none; }
+.dial-sub { font-size: 12px; font-variant-numeric: tabular-nums; }
+.dial-sub.warn { color: #dc2626; }
+@media (prefers-color-scheme: dark) { .dial-sub.warn { color: #ef4444; } }
 
-.bars { display: grid; gap: 18px; margin-bottom: 28px; }
-.bar-row { display: grid; grid-template-columns: 120px 1fr 56px; align-items: center; gap: 16px; }
-.bar-label { font-size: 13px; font-weight: 500; }
 .reset { display: block; font-size: 11px; font-weight: 400; margin-top: 2px; }
-.track { height: 10px; background: var(--line); border-radius: 999px; overflow: hidden; }
-.fill { height: 100%; width: 0%; border-radius: 999px; transition: width .6s cubic-bezier(.2,.7,.2,1); }
-.fill.fh { background: var(--fh); }
-.fill.sd { background: var(--sd); }
-.fill.cx1 { background: var(--cx1); }
-.fill.cx2 { background: var(--cx2); }
-.bar-row.placeholder { visibility: hidden; }
-.pct { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 15px; }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 .chart-card { padding: 16px 16px 8px; margin-bottom: 24px; }
-.chart-head { display: flex; justify-content: space-between; align-items: flex-start; font-size: 12px; margin-bottom: 8px; gap: 12px; }
-.legend-col { display: flex; flex-direction: column; align-items: center; gap: 3px; }
-.consumed { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); text-align: center; min-height: 15px; }
-.consumed b { font-weight: 600; }
 .seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--line); border-radius: 10px; }
 .seg button {
   border: 0; background: transparent; color: var(--muted);
@@ -223,11 +242,6 @@ table.acc-tbl tr.active td:first-child::after { content: " · in use"; color: va
   .seg { background: #1c202b; }
   .seg button.on { background: #2a2f3d; color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
 }
-.legend { display: inline-flex; gap: 14px; align-items: center; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
-.lg { display: inline-flex; align-items: center; white-space: nowrap; }
-.swatch { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
-.swatch.fh { background: var(--fh); } .swatch.sd { background: var(--sd); }
-.swatch.cx1 { background: var(--cx1); } .swatch.cx2 { background: var(--cx2); }
 #chart { width: 100%; }
 /* overview strip: all history + forecast, with the main chart's window on it */
 .chart-ov { width: 100%; margin-top: 4px; user-select: none; touch-action: none; --ov-dim: rgba(255, 255, 255, .72); }
@@ -236,26 +250,19 @@ table.acc-tbl tr.active td:first-child::after { content: " · in use"; color: va
   border: 1px solid var(--muted); border-radius: 4px; pointer-events: none;
   box-shadow: 0 0 0 9999px var(--ov-dim); }
 @media (prefers-color-scheme: dark) { .chart-ov { --ov-dim: rgba(21, 24, 33, .72); } }
+/* under the strip: what the chart spans, and the range presets */
+.range-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 2px 0 4px; }
+.range-span { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 0; }
+.range-presets { display: inline-flex; gap: 2px; flex-shrink: 0; }
+.range-presets button { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 6px; cursor: pointer; }
+.range-presets button:hover { color: var(--ink); }
+.range-presets button.on { color: var(--ink); background: var(--line); font-weight: 600; }
+.range-presets button:focus-visible { outline: 2px solid var(--muted); outline-offset: 1px; }
 
-.prog-card { padding: 14px 16px; margin-bottom: 24px; }
-.prog-head { font-size: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
-/* Compact segmented control for the forecast picker, sitting inline in a card
-   header rather than dominating it. */
+/* Compact segmented control (the account and scope switches, and the forecast
+   model picker in the meter's tooltip). */
 .seg-sm { padding: 2px; border-radius: 8px; }
 .seg-sm button { padding: 3px 9px; font-size: 11px; border-radius: 6px; }
-.prog { display: grid; gap: 8px; }
-.prog-row { display: grid; grid-template-columns: 92px 1fr auto; align-items: baseline; gap: 12px; font-size: 13px; }
-.prog-label { font-weight: 600; }
-.prog-msg { color: var(--ink); }
-.prog-rate { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
-.prog-row.ok .prog-msg { color: #16794c; }
-.prog-row.warn .prog-msg { color: #b42318; font-weight: 500; }
-.prog-row.muted .prog-msg { color: var(--muted); }
-.prog-row.placeholder { visibility: hidden; }
-@media (prefers-color-scheme: dark) {
-  .prog-row.ok .prog-msg { color: #4ade80; }
-  .prog-row.warn .prog-msg { color: #f9a8a8; }
-}
 
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px; }
 .cards.two { grid-template-columns: repeat(2, 1fr); }

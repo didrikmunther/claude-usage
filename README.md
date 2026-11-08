@@ -24,8 +24,10 @@ spike markers.
   the panel explains the dial. Click it to drop the full dashboard down as a
   panel (a webview of the local server).
 - **Dashboard** (`http://127.0.0.1:44405`): Claude and Codex side by side —
-  5h/weekly bars with reset countdowns, a uPlot history graph (24h / week /
-  full), a "used this range" tally, per-window forecasts, and hover-to-reveal
+  a meter per 5h/weekly limit (used, the next hour at your burn rate, the
+  forecast to the reset and what's left, each part explained on hover) with its reset
+  countdown, a uPlot history graph (24h / week /
+  full) and hover-to-reveal
   markers on your biggest spikes.
 
 > macOS only. It's a companion to Claude Code / the Claude desktop app and/or the

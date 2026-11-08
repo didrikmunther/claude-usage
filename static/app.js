@@ -29,6 +29,7 @@ for (const [p, k] of Object.entries(RANGE_KEYS)) {
 
 // Which forecast strategy drives the chart projection (see predict.js).
 const FORECAST_MODELS = ["adaptive", "linear", "cycle", "cycle+tod", "analog"];
+const MODEL_NAMES = { adaptive: "Adaptive", linear: "Linear", cycle: "Cycle", "cycle+tod": "Cycle+day", analog: "Analog" };
 // Server-owned, not localStorage: the floating pill runs in a web view with no
 // persistent storage, so this is the only place both surfaces can read one value.
 // Arrives on the WebSocket "init" and on every "forecast_model" broadcast.
@@ -411,53 +412,7 @@ function withProjection(tsFull, aFull, bFull, rst, model) {
     mkRow(loA), mkRow(loB),
     mkRow(hiA), mkRow(hiB)];
 }
-function applyRangeAll() { applyRange(C); applyRange(K); applyRange(X); renderConsumed(); }
-
-// Percentage units consumed within the visible range = sum of positive
-// step-to-step increments per series (resets/decreases don't count).
-function consumedInRange(st) {
-  const ts = st.data[0];
-  const v = viewOf(st);
-  let i = 0;
-  if (v) while (i < ts.length && ts[i] < v.min) i++;
-  const end = v ? v.max : Infinity;
-  const out = [];
-  for (let s = 1; s <= 2; s++) {
-    const y = st.data[s];
-    let sum = 0, prev = null, n = 0;
-    for (let k = i; k < y.length && ts[k] <= end; k++) {
-      const val = y[k];
-      if (val == null) continue;
-      n++;
-      if (prev != null && val > prev) sum += val - prev;
-      prev = val;
-    }
-    out.push({ sum, n });
-  }
-  return out;
-}
-
-function renderConsumed() {
-  const targets = [
-    // {i} indexes into consumedInRange's [series1, series2]. Codex omits 5-hour.
-    { st: C, el: "consumed", series: [{ i: 0, lbl: "5h", col: "--fh" }, { i: 1, lbl: "7d", col: "--sd" }] },
-    { st: K, el: "k_consumed", series: [{ i: 0, lbl: "5h", col: "--fh" }, { i: 1, lbl: "7d", col: "--sd" }] },
-    { st: X, el: "cxConsumed", series: [{ i: 1, lbl: "7d", col: "--cx2" }] },
-  ];
-  for (const t of targets) {
-    const el = $(t.el);
-    if (!el) continue;
-    const res = consumedInRange(t.st);
-    // No 5-hour limit on this plan: its "used" total would only ever read +0%.
-    const series = CLAUDES.includes(t.st) && t.st.last && !hasFiveHour(t.st)
-      ? t.series.filter((sp) => sp.i !== 0) : t.series;
-    const parts = series.map((sp) => {
-      const r = res[sp.i];
-      return r && r.n > 1 ? `<b style="color:var(${sp.col})">${sp.lbl} +${Math.round(r.sum)}%</b>` : null;
-    }).filter(Boolean);
-    el.innerHTML = parts.length ? `<span class="muted">used</span> ${parts.join(" · ")}` : "";
-  }
-}
+function applyRangeAll() { applyRange(C); applyRange(K); applyRange(X); }
 
 // Appends without drawing. Ignores anything not newer than the last point: after
 // a resync, the samples the socket buffered while the page was paused arrive too.
@@ -487,7 +442,6 @@ function loadHistory(rows) {
 }
 
 // ---- formatting helpers ----
-function fmtPct(v) { return v == null ? "–" : Math.round(v) + "%"; }
 
 
 
@@ -540,12 +494,6 @@ function tickRate(pts, nowSec, maxBack) {
   return Math.min(rate, last[1] / Math.max(1, nowSec - last[0]));
 }
 
-function progRow(label, p) {
-  if (!p) return "";
-  const rate = p.rate ? `<span class="prog-rate">${p.rate}</span>` : `<span class="prog-rate"></span>`;
-  return `<div class="prog-row ${p.cls}"><span class="prog-label">${label}</span><span class="prog-msg">${p.msg}</span>${rate}</div>`;
-}
-const emptyRow = () => `<div class="prog-row muted"><span class="prog-msg">gathering data…</span></div>`;
 
 // ---- Claude rendering ----
 function renderClaude(st, s) {
@@ -555,18 +503,11 @@ function renderClaude(st, s) {
   const sl = scopedLimit(st);
   const wk = sl ? sl.percent : s.sd;
   // Plans without a 5-hour limit (Ultra, since Nov 2026) get five_hour: null.
-  const five = hasFiveHour(st), col = $(st.p + "fhFill").closest(".col");
-  $(st.p + "fhFill").closest(".bar-row").style.display = five ? "" : "none";
-  const lg = col && col.querySelector(".legend .swatch.fh");
-  if (lg) lg.parentElement.style.display = five ? "" : "none";
+  $(st.p + "fhCell").hidden = !hasFiveHour(st);
   if (X.last && X.ghostFor !== claudeHasFiveHour()) renderCodex(X.last);   // re-align its rows
-  $(st.p + "fhFill").style.width = (s.fh ?? 0) + "%";
-  $(st.p + "sdFill").style.width = (wk ?? 0) + "%";
-  $(st.p + "fhPct").textContent = fmtPct(s.fh);
-  $(st.p + "sdPct").textContent = fmtPct(wk);
-  $(st.p + "sdLabel").textContent = sl ? scope : "7-day";
+  meter(st.p + "fh").used(s.fh, st.resets.five_hour);
+  meter(st.p + "sd").used(wk, sl ? sl.resets_at : st.resets.seven_day);
   paintScope(st, sl);
-  renderScoped(st, s.limits);
   renderClaudeResets(st);
   renderClaudeForecast(st);
 }
@@ -643,15 +584,6 @@ function wireScope() {
     }));
 }
 
-function renderScoped(st, limits) {
-  const box = $(st.p + "scoped");
-  const scoped = (limits || []).filter((l) => l.scope && l.scope.model);
-  box.innerHTML = scoped.map((l) => {
-    const name = l.scope.model.display_name || "model";
-    return `<div class="row"><span>Weekly · ${name}</span><b>${Math.round(l.percent)}%</b></div>`;
-  }).join("");
-}
-
 function renderClaudeResets(st) {
   $(st.p + "fhReset").textContent = countdown(st.resets.five_hour);
   const sl = scopedLimit(st);
@@ -688,37 +620,36 @@ function colReset(st, col) {
   return col === 1 ? r.a : col === 2 ? r.b : null;
 }
 
+// The forecast reads the SAME trajectory the chart draws, so the meter and the
+// curve above it can never disagree.
 function renderClaudeForecast(st) {
   if (!st.last) return;
-  const rows = [];
-  // A scoped view swaps the weekly rows for that model's limit (straight-line
-  // pace: there's no stored history for it); the 5-hour limit still applies.
+  // A model-scoped weekly limit has no stored history: straight-line pace.
   const sl = scopedLimit(st);
-  if (sl) rows.push(progRow(scope, forecast(sl.percent, 7 * 24 * 3600e3, sl.resets_at, null)));
-  for (const w of sl ? CLAUDE_WIN.filter((w) => w.key === "fh") : CLAUDE_WIN) {
+  if (sl) {
+    const p = forecast(sl.percent, 7 * 24 * 3600e3, sl.resets_at, null);
+    showOutlook(st.p + "sd", sl.percent, p, () => projectedAtReset(sl.percent, 7 * 24 * 3600e3, sl.resets_at, null));
+  }
+  for (const w of CLAUDE_WIN.filter((w) => w.key === "fh" || (w.key === "sd" && !sl))) {
     const cur = st.last[w.key];
     if (cur == null) continue;
     const resetIso = st.resets[w.reset];
     const samples = (w.series && resetIso)
       ? cycleSamples(st.data, w.series, new Date(resetIso).getTime(), w.winMs) : null;
-    // Windows the chart doesn't plot (Opus, Sonnet) keep the straight-line pace.
     const proj = windowProjection(st, w.col, resetIso, colReset(st, w.col));
     const p = (proj && forecastFromPoints(cur, w.winMs, resetIso, proj))
       || forecast(cur, w.winMs, resetIso, samples);
-    rows.push(progRow(w.label, p));
+    showOutlook(st.p + w.key, cur, p, () => projectedAtReset(cur, w.winMs, resetIso, samples));
   }
-  $(st.p + "prog").innerHTML = rows.join("") || emptyRow();
 }
 
 // ---- Codex rendering ----
-// Fixed slots mirroring Claude's rows: 5-hour on top, 7-day below. A window with
-// no data leaves an invisible ghost so both columns line up row-for-row.
+// Fixed slots mirroring Claude's dials: 5-hour first, 7-day second. A window with
+// no data leaves an invisible ghost so both columns line up dial-for-dial.
 const CX_SLOTS = [
-  { label: "5-hour", cls: "cx1" },
-  { label: "7-day",  cls: "cx2" },
+  { label: "5-hour", id: "cx5" },
+  { label: "7-day",  id: "cx7" },
 ];
-const GHOST_BAR = `<div class="bar-row placeholder" aria-hidden="true"><div class="bar-label">&nbsp;<span class="reset">&nbsp;</span></div><div class="track"></div><div class="pct"></div></div>`;
-const GHOST_PROG = `<div class="prog-row placeholder" aria-hidden="true"><span class="prog-label">&nbsp;</span><span class="prog-msg">&nbsp;</span><span class="prog-rate"></span></div>`;
 
 function showCodex() {
   if (X.shown) return;
@@ -735,31 +666,25 @@ function renderCodex(s) {
   $("cxSource").textContent = s.source === "rollout" ? "· cached (Codex idle)" : "";
 
   const wins = s.windows || [];
-  const barFor = (w, cls) => `
-    <div class="bar-row">
-      <div class="bar-label">${w.label}<span class="reset muted" data-reset="${w.reset_at || ""}">${countdown(w.reset_at)}</span></div>
-      <div class="track"><div class="fill ${cls}" style="width:${w.used_percent ?? 0}%"></div></div>
-      <div class="pct">${fmtPct(w.used_percent)}</div>
-    </div>`;
-  const usedW = new Set();
   X.ghostFor = claudeHasFiveHour();
-  let barsHtml = CX_SLOTS.map((slot) => {
+  for (const slot of CX_SLOTS) {
     const w = wins.find((x) => x.label === slot.label);
-    if (w) { usedW.add(w); return barFor(w, slot.cls); }
-    // Keep the slot's height so the rows line up with Claude's, but only while
-    // Claude has a row there: without a 5-hour limit its 7-day sits on top.
-    return slot.label === "5-hour" && !claudeHasFiveHour() ? "" : GHOST_BAR;
-  }).join("");
-  wins.filter((w) => !usedW.has(w)).forEach((w) => barsHtml += barFor(w, "cx1"));  // any odd window
-  $("cxBars").innerHTML = barsHtml;
-
-  $("cxLegend").innerHTML = CX_SLOTS
-    .filter((slot) => wins.some((w) => w.label === slot.label))
-    .map((slot) => `<span class="lg"><i class="swatch ${slot.cls}"></i>${slot.label}</span>`).join("");
+    // Keep the slot's place so the dials line up with Claude's, but only while
+    // Claude has a dial there: without a 5-hour limit its 7-day comes first.
+    $(slot.id + "Cell").hidden = !w && slot.label === "5-hour" && !claudeHasFiveHour();
+    $(slot.id + "Cell").classList.toggle("placeholder", !w);
+    if (!w) continue;
+    const r = $(slot.id + "Reset");
+    r.dataset.reset = w.reset_at || "";
+    r.textContent = countdown(w.reset_at);
+    meter(slot.id).used(w.used_percent, w.reset_at);
+  }
+  // Any window without a slot gets a plain row under the chart.
+  const odd = wins.filter((w) => !CX_SLOTS.some((slot) => slot.label === w.label) && w.used_percent != null);
 
   // Hide the model-specific "Spark" feature limit — it's usually 0% and not a real cap.
   const add = (s.additional || []).filter((a) => a.used_percent != null && !/spark/i.test(a.label || ""));
-  $("cxScoped").innerHTML = add.map((a) =>
+  $("cxScoped").innerHTML = [...odd, ...add].map((a) =>
     `<div class="row"><span>${a.label}</span><b>${Math.round(a.used_percent)}%</b></div>`).join("");
 
   renderCodexForecast();
@@ -767,10 +692,11 @@ function renderCodex(s) {
 
 function renderCodexForecast() {
   if (!X.last) return;
-  const wins = X.last.windows || [];
   const idxByLabel = { "5-hour": 1 };   // only the 5-hour uses recent-rate; 7-day averages
   const colByLabel = { "5-hour": 1, "7-day": 2 };   // which charted series the window is
-  const progFor = (w) => {
+  for (const slot of CX_SLOTS) {
+    const w = (X.last.windows || []).find((x) => x.label === slot.label);
+    if (!w) continue;
     const idx = idxByLabel[w.label] || null;
     const col = colByLabel[w.label] || null;
     const winMs = (w.window_seconds || 0) * 1000;
@@ -779,18 +705,8 @@ function renderCodexForecast() {
     const proj = windowProjection(X, col, w.reset_at, colReset(X, col));
     const p = (proj && forecastFromPoints(w.used_percent, winMs, w.reset_at, proj))
       || forecast(w.used_percent, winMs, w.reset_at, samples);
-    return progRow(w.label, p);
-  };
-  // Only real windows here (no ghost padding) — Codex's 7-day sits at the top,
-  // aligning with Claude's now-top 7-day forecast row.
-  const usedW = new Set();
-  const rows = [];
-  for (const slot of CX_SLOTS) {
-    const w = wins.find((x) => x.label === slot.label);
-    if (w) { usedW.add(w); rows.push(progFor(w)); }
+    showOutlook(slot.id, w.used_percent, p, () => projectedAtReset(w.used_percent, winMs, w.reset_at, samples));
   }
-  wins.filter((w) => !usedW.has(w)).forEach((w) => rows.push(progFor(w)));
-  $("cxProg").innerHTML = rows.join("") || emptyRow();
 }
 
 // ---- status ----
@@ -835,14 +751,14 @@ function wireControls() {
 // One range per provider; both Claude columns (desktop + CLI) share Claude's.
 // A dragged window lights no preset; clicking one snaps back to it.
 function paintRange() {
-  document.querySelectorAll('.seg[data-sync="range"]').forEach((g) =>
+  document.querySelectorAll('[data-sync="range"]').forEach((g) =>
     g.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("on", !views[g.dataset.p] && b.dataset.r === ranges[g.dataset.p])));
 }
 
 function wireRange() {
   paintRange();
-  document.querySelectorAll('.seg[data-sync="range"]').forEach((g) =>
+  document.querySelectorAll('[data-sync="range"]').forEach((g) =>
     g.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
       const p = g.dataset.p;
       ranges[p] = b.dataset.r;
@@ -856,7 +772,6 @@ function resetView(p) {
   views[p] = null;
   paintRange();
   for (const st of [C, K, X]) if (provOf(st) === p) applyView(st);
-  renderConsumed();
 }
 
 // ---- detail on demand ----
@@ -949,12 +864,35 @@ function windowBox(st) {
 }
 
 function paintWindow(st) {
+  paintSpan(st);
   if (!st.ovWin) return;
   const b = windowBox(st);
   st.ovWin.hidden = !b;
   if (!b) return;
   st.ovWin.style.left = b.l + "px";
   st.ovWin.style.width = b.r - b.l + "px";
+}
+
+// What the chart is showing, under the strip: the preset's name, or after a drag
+// the dates it spans.
+const SPAN_NAMES = { "24h": "Last 24 hours", "7d": "Last 7 days" };
+function paintSpan(st) {
+  const el = $(st === X ? "cxChartSpan" : st.p + "chartSpan"), v = viewOf(st);
+  if (!el || !v) return;
+  const p = provOf(st);
+  if (!views[p]) {
+    const first = firstReal(st);
+    el.textContent = SPAN_NAMES[ranges[p]] || (first ? `Since ${fmtSpanEnd(first, true)}` : "");
+    return;
+  }
+  const sec = v.max - v.min, days = sec >= 2 * 86400;
+  el.textContent = `${fmtSpanEnd(v.min, days)} – ${fmtSpanEnd(v.max, days)} · ` +
+    (days ? `${Math.round(sec / 86400)} days` : `${Math.max(1, Math.round(sec / 3600))} h`);
+}
+function fmtSpanEnd(t, dateOnly) {
+  const d = new Date(t * 1000);
+  const day = d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return dateOnly ? day : `${day} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}`;
 }
 
 // Set the provider's window to [min, max], kept inside history + forecast.
@@ -976,7 +914,6 @@ function setView(st, min, max, kind) {
   views[p] = { back: now - min, ahead: max - now };
   paintRange();
   for (const s of [C, K, X]) if (provOf(s) === p) applyView(s);
-  renderConsumed();
   scheduleDetail(st);
 }
 
@@ -1033,16 +970,10 @@ function attachNavigator(st) {
 }
 
 // One model per provider, kept in step across that provider's panels.
-function wireForecastModel() {
-  document.querySelectorAll('.seg[data-sync="model"]').forEach((g) =>
-    g.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
-      // Tell the server; the broadcast comes back and applies it everywhere,
-      // including the floating pill.
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ set_forecast_model: b.dataset.m, provider: g.dataset.p }));
-      }
-    })));
-  paintForecastModel();
+// Kept server-side: the broadcast comes back and applies it everywhere,
+// including the floating pill.
+function setForecastModel(provider, m) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ set_forecast_model: m, provider }));
 }
 
 function paintForecastModel() {
@@ -1074,7 +1005,7 @@ function drawSamplesSoon() {
     if (p.claude2) renderClaude(K, p.claude2);
     if (p.codex) renderCodex(p.codex);
     applyRangeAll();
-    if (p.quiet) { updateGauges(); snapGauges(); }
+    if (p.quiet) updateGauges();
     setStatus(p.status);
   });
 }
@@ -1418,7 +1349,6 @@ function connect() {
       }
       setStatus(m.status);
       updateGauges();
-      snapGauges();
       scoreForecasts();
       reveal();
       refreshIfBehind();                    // e.g. reconnected after the Mac slept
@@ -1461,135 +1391,195 @@ function connect() {
 }
 
 // ---- 1-second tick: keep countdowns + forecasts fresh ----
-// ---- burn-rate gauges (speedometer of last-5-min %/h) ----
-const GAUGE_MAX = 60;   // %/h full-scale
-let claudeGauge = null, claude2Gauge = null, codexGauge = null;
+// ---- usage meters: one per window ----
+// A bar in blocks: what's used, the next hour at the current burn rate, the
+// rest of the forecast to the reset (red when it runs out first) and what's left
+// at the reset. Every block explains itself on hover or focus.
+const CLAUDE_MAX = 100;   // %/h full scale for a 5-hour window
+const CODEX_MAX = 8;      // %/h full scale for a 7-day window (its rate is inherently small)
+const SCALES = {          // window → full scale, the green|amber and amber|red stops, and how far back the rate looks
+  5:   { max: CLAUDE_MAX, zones: [0.3, 0.6], lookback: 5 * 60, over: "the last few minutes" },
+  168: { max: CODEX_MAX, zones: [1 / 3, 2 / 3], lookback: 168 * 60, over: "the last few hours" },
+};
+const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SMOKERS = new Set();   // each meter's puff timer, run from one animation loop
+function smokeLoop(now) { for (const f of SMOKERS) f(now); requestAnimationFrame(smokeLoop); }
+const METERS = new Map();   // "fh", "k_sd", "cx7", … → meter
+const NO_METER = { used() {}, outlook() {}, rate() {} };
+const meter = (key) => METERS.get(key) || NO_METER;
+const escHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-function makeGauge(elId, zoneStops) {
-  const el = $(elId);
-  if (!el) return { update() {} };
-  const zs = zoneStops || [1 / 3, 2 / 3];        // green|amber and amber|red, as dial fractions
-  const cx = 75, cy = 72, R = 56, rz = R - 4;
-  const ang = (v) => 180 * (1 - Math.min(Math.max(v, 0), GAUGE_MAX) / GAUGE_MAX);  // deg
-  const pol = (r, deg) => { const a = deg * Math.PI / 180; return [cx + r * Math.cos(a), cy - r * Math.sin(a)]; };
-  const arc = (r, v1, v2) => {
-    const [x1, y1] = pol(r, ang(v1)), [x2, y2] = pol(r, ang(v2));
-    return `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+function makeMeter(key, color, label, provider) {
+  const el = $(key + "Meter");
+  if (!el) return;
+  // Amber (Claude 5-hour) is too light for white numbers on it.
+  el.innerHTML = `<div class="meter${color === "--fh" ? " light-m" : ""}" style="--m:var(${color})" role="group" aria-label="${label} limit">
+      <div class="m-seg m-used" data-part="used" tabindex="0"><span class="m-lbl"></span></div>
+      <div class="m-seg m-rate" data-part="rate" tabindex="0"><span class="m-lbl"></span></div>
+      <div class="m-seg m-fc" data-part="fc" tabindex="0"><span class="m-lbl"></span></div>
+      <div class="m-seg m-left" data-part="left" tabindex="0"></div>
+    </div><div class="m-tip" role="tooltip" hidden></div>`;
+  const smoke = document.createElement("div");
+  smoke.className = "m-smoke";
+  el.append(smoke);
+  const bar = el.querySelector(".meter"), tip = el.querySelector(".m-tip");
+  const seg = (part) => bar.querySelector(`[data-part="${part}"]`);
+  const usedEl = seg("used"), fcEl = seg("fc"), leftEl = seg("left"), rateEl = seg("rate");
+  const st = { used: null, reset: null, atReset: null, over: false, hitMs: null, note: "", rate: null, hours: 168 };
+
+  // Each block is its share of the bar; a block with nothing in it drops out.
+  const paint = () => {
+    const u = Math.max(0, Math.min(100, st.used ?? 0));
+    const f = st.over ? 100 : st.atReset == null ? u : Math.max(u, Math.min(100, st.atReset));
+    const r = st.rate == null ? 0 : Math.min(100 - u, st.rate);   // one hour at this pace
+    const end = Math.max(f, u + r);
+    usedEl.style.width = u + "%";
+    rateEl.style.width = r + "%";
+    fcEl.style.width = (end - u - r) + "%";
+    leftEl.style.width = (100 - end) + "%";
+    usedEl.classList.toggle("empty", u < 0.5);
+    rateEl.classList.toggle("empty", r < 0.3);
+    fcEl.classList.toggle("empty", end - u - r < 0.5);
+    leftEl.classList.toggle("empty", 100 - end < 0.5);
+    fcEl.classList.toggle("over", st.over);
+    const shown = [usedEl, rateEl, fcEl, leftEl].filter((e) => !e.classList.contains("empty"));
+    for (const e of [usedEl, rateEl, fcEl, leftEl]) {
+      e.classList.toggle("first", e === shown[0]);
+      e.classList.toggle("last", e === shown[shown.length - 1]);
+    }
+    usedEl.firstChild.textContent = st.used == null ? "" : `${Math.round(st.used)}%`;
+    fcEl.firstChild.textContent = st.over || st.atReset == null ? "" : `${Math.round(st.atReset)}%`;
+    rateEl.firstChild.textContent = st.rate == null ? "" : fmtRate(st.rate);
+    // A number only shows where its block can hold it (hover tells the rest).
+    const W = bar.clientWidth || 300, px = (pct) => (pct / 100) * W;
+    usedEl.classList.toggle("tight", px(u) < 40);
+    fcEl.classList.toggle("tight", px(end - u - r) < 40);
+    rateEl.classList.toggle("tight", px(r) < 56);
   };
-  const G = GAUGE_MAX;
-  const zones = [[0, zs[0], "#22c55e"], [zs[0], zs[1], "#f59e0b"], [zs[1], 1, "#ef4444"]]
-    .map(([a, b, c]) => `<path d="${arc(rz, a * G, b * G)}" fill="none" stroke="${c}" stroke-width="6" opacity=".9"/>`).join("");
-  let ticks = "";
-  for (let v = 0; v <= GAUGE_MAX; v += 10) {
-    const [x1, y1] = pol(R, ang(v)), [x2, y2] = pol(R - 7, ang(v));
-    ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--muted)" stroke-width="1"/>`;
-  }
-  const [nx, ny] = pol(R - 12, ang(0));
-  el.innerHTML = `<svg viewBox="0 0 150 96" class="gauge-svg">
-    <defs>
-      <filter id="${elId}-blur" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="1.7"/></filter>
-      <radialGradient id="${elId}-sg"><stop offset="0%" stop-color="#9ca3af" stop-opacity=".9"/><stop offset="55%" stop-color="#9ca3af" stop-opacity=".4"/><stop offset="100%" stop-color="#9ca3af" stop-opacity="0"/></radialGradient>
-    </defs>
-    ${zones}${ticks}
-    <line id="${elId}-n" x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="var(--ink)" stroke-width="2.5" stroke-linecap="round"/>
-    <circle cx="${cx}" cy="${cy}" r="3.5" fill="var(--ink)"/>
-    <g id="${elId}-steam" filter="url(#${elId}-blur)"></g>
-    <text id="${elId}-v" x="${cx}" y="93" text-anchor="middle" class="gauge-val">– %/h</text></svg>`;
-  const needle = $(`${elId}-n`), val = $(`${elId}-v`);
-  const steamG = $(`${elId}-steam`);
-  // A rising, fading steam puff — vented while the gauge is over the max.
+
+  // A fast burn smokes: puffs rise off the rate block, thicker past full scale.
+  let heat = 0, lastPuff = 0;          // 0 calm, 1 in the red, 2 past full scale
   const puff = () => {
-    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    c.setAttribute("cx", (62 + Math.random() * 26).toFixed(1));   // a narrow column
-    c.setAttribute("cy", (30 + Math.random() * 3).toFixed(1));
-    c.setAttribute("r", (4 + Math.random() * 2.5).toFixed(1));    // big + soft
-    c.setAttribute("fill", `url(#${elId}-sg)`);
-    c.setAttribute("class", "steam-puff");
-    c.style.setProperty("--dx", (Math.random() * 12 - 6).toFixed(1) + "px");
-    c.addEventListener("animationend", () => c.remove());
-    steamG.appendChild(c);
+    const b = rateEl.classList.contains("empty") ? usedEl : rateEl;
+    const br = bar.getBoundingClientRect(), r = b.getBoundingClientRect();
+    const p = document.createElement("i");
+    p.style.left = (r.left - br.left + Math.random() * Math.max(8, r.width) - 7).toFixed(1) + "px";
+    p.style.setProperty("--dx", (Math.random() * 14 - 7).toFixed(1) + "px");
+    p.addEventListener("animationend", () => p.remove());
+    smoke.append(p);
   };
-  // `dv` is dial-space (0..GAUGE_MAX); needle pegs at the redline, but the readout
-  // shows the TRUE %/h (uncapped — it can climb past the dial's full scale).
-  let readoutRate = 0, readoutWin = "", readoutDec = 0;
-  const setNeedle = (dv) => {
-    const [x2, y2] = pol(R - 12, ang(dv));
-    needle.setAttribute("x2", x2.toFixed(1));
-    needle.setAttribute("y2", y2.toFixed(1));
-    val.textContent = `${readoutRate.toFixed(readoutDec)} %/h · ${readoutWin}`;
-    const f = dv / G;
-    val.style.fill = f < zs[0] ? "#16a34a" : f < zs[1] ? "#d97706" : "#dc2626";
-  };
-  // One always-on animation loop drives the needle: it eases toward `target`
-  // (the live rate) as samples arrive. Opening the page snaps it there instead.
-  const SMOOTH = 0.12, VIB_AMP = 4, VIB_FREQ = 0.08, PUFF_MS = 120;
-  let target = 0, cur = 0, over = false, lastPuff = 0;
-  const loop = (now) => {
-    if (over && now - lastPuff > PUFF_MS) { lastPuff = now; puff(); }
-    cur += (target - cur) * SMOOTH;                                   // exponential ease
-    if (Math.abs(target - cur) < 0.03) cur = target;
-    // Over the dial's max → buzz the needle against the redline (clamped at max).
-    const dv = over ? cur + Math.sin(now * VIB_FREQ) * VIB_AMP : cur;
-    setNeedle(dv);
-    requestAnimationFrame(loop);
-  };
-  requestAnimationFrame(loop);
-  return {
-    // rate = true %/h (shown); maxRate = the %/h that fills the dial (= 3× the
-    // tracked window's sustainable rate); hours = that window's length (labelled).
-    update(rate, maxRate, hours) {
-      readoutRate = rate || 0;
-      readoutWin = hours >= 48 ? `${Math.round(hours / 24)}d` : `${Math.round(hours)}h`;
-      readoutDec = hours >= 48 ? 2 : 0;      // slow day-scale windows need decimals
-      const mx = maxRate || GAUGE_MAX;
-      over = (rate || 0) > mx;               // past full-scale → vibrate
-      target = Math.min(1, Math.max(0, (rate || 0) / mx)) * GAUGE_MAX;
+  SMOKERS.add((now) => {
+    if (!heat || now - lastPuff < (heat > 1 ? 120 : 260)) return;
+    lastPuff = now;
+    puff();
+  });
+  new ResizeObserver(paint).observe(bar);
+
+  const hoursLeft = () => (st.reset ? (new Date(st.reset).getTime() - Date.now()) / 3600e3 : null);
+  const tips = {
+    used: () => [`Used · ${Math.round(st.used ?? 0)}%`,
+      `How much of your ${label} limit you've used since it last reset.`],
+    fc: () => st.over
+      ? [`Runs out in ${fmtDur((st.hitMs - Date.now()) / 1000)}`,
+         `At the forecast pace you reach 100% ${fmtDur((new Date(st.reset).getTime() - st.hitMs) / 1000)} before the limit resets.`]
+      : [`Forecast · ${Math.round(st.atReset)}% at reset`,
+         `About ${Math.max(0, Math.round(st.atReset - st.used))}% more before the reset. The model below makes this forecast and the dashed line on the chart.`],
+    left: () => st.atReset == null || st.over
+      ? [`Unused · ${Math.round(100 - (st.used ?? 0))}%`, `What's still free of your ${label} limit right now.`]
+      : [`Left at reset · ${Math.round(100 - st.atReset)}%`,
+         `What should still be unused when the limit resets${st.reset ? " " + countdown(st.reset).replace(/^resets /, "") : ""}.`],
+    rate: () => {
+      const h = hoursLeft(), sc = SCALES[st.hours] || SCALES[168];
+      const pace = h > 0 ? (100 - (st.used ?? 0)) / h : null;
+      return [`Burn rate · ${fmtRate(st.rate)}`,
+        `What you'd add in the next hour if you keep going like this, measured over ${sc.over}.` +
+        (pace != null ? ` Staying under ${fmtRate(pace)} lasts until the reset.` : "")];
     },
-    snap() { cur = target; },
   };
+  // The forecast's tooltip carries the model picker (and so does what's left
+  // while there is no forecast block to hover, e.g. just after a reset).
+  const models = () => `<div class="seg seg-sm m-models" data-p="${provider}" data-sync="model">` +
+    FORECAST_MODELS.map((m) =>
+      `<button data-m="${m}" class="${m === forecastModels[provider] ? "on" : ""}">${MODEL_NAMES[m]}</button>`).join("") + `</div>`;
+  let hideTimer = null;
+  const hide = () => { clearTimeout(hideTimer); hideTimer = setTimeout(() => { tip.hidden = true; }, 220); };
+  const keep = () => clearTimeout(hideTimer);
+  const show = (part, target) => {
+    keep();
+    if (!tips[part] || (part === "fc" && !st.over && st.atReset == null) || (part === "rate" && st.rate == null)) { tip.hidden = true; return; }
+    const [title, text] = tips[part]();
+    const picker = part === "fc" || (part === "left" && st.atReset == null && !st.over);
+    tip.innerHTML = `<div class="tip-t">${escHtml(title)}</div><div class="tip-x">${escHtml(text)}</div>` + (picker ? models() : "");
+    tip.classList.toggle("interactive", picker);
+    tip.hidden = false;
+    // Centred over the block, kept inside the meter's width.
+    const br = bar.getBoundingClientRect(), tr = target.getBoundingClientRect();
+    const w = tip.offsetWidth, mid = tr.left + tr.width / 2 - br.left;
+    tip.style.left = Math.max(0, Math.min(br.width - w, mid - w / 2)) + "px";
+    // Above the bar, unless that would run off the top of the window (the menu-bar
+    // panel opens with the meters near its top edge): then below it.
+    tip.classList.toggle("below", br.top - tip.offsetHeight - 8 < 0);
+  };
+  bar.addEventListener("pointerover", (e) => { const t = e.target.closest("[data-part]"); if (t) show(t.dataset.part, t); });
+  bar.addEventListener("focusin", (e) => { const t = e.target.closest("[data-part]"); if (t) show(t.dataset.part, t); });
+  // Leaving the bar gives the pointer a moment to cross onto the tooltip.
+  bar.addEventListener("pointerleave", hide);
+  bar.addEventListener("focusout", (e) => { if (!tip.contains(e.relatedTarget)) hide(); });
+  tip.addEventListener("pointerenter", keep);
+  tip.addEventListener("pointerleave", hide);
+  tip.addEventListener("focusout", (e) => { if (!tip.contains(e.relatedTarget) && !bar.contains(e.relatedTarget)) hide(); });
+  tip.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-m]");
+    if (b) setForecastModel(provider, b.dataset.m);
+  });
+
+  METERS.set(key, {
+    used(pct, resetIso) { st.used = pct; st.reset = resetIso || null; paint(); },
+    // atReset: % used at the reset (null when unknown); hitMs: when it reaches 100% first.
+    outlook(atReset, hitMs) { st.over = hitMs != null; st.hitMs = hitMs; st.atReset = atReset; paint(); },
+    // rate: true %/h (null hides it); hours picks the scale its colour is read on.
+    rate(rate, hours) {
+      st.rate = rate; st.hours = hours;
+      const sc = SCALES[hours] || SCALES[168], f = (rate || 0) / sc.max;
+      heat = REDUCED_MOTION || rate == null ? 0 : f > 1 ? 2 : f >= sc.zones[1] ? 1 : 0;
+      paint();
+    },
+  });
 }
 
-function snapGauges() { for (const g of [claudeGauge, claude2Gauge, codexGauge]) if (g) g.snap(); }
+const fmtRate = (r) => `${(r || 0).toFixed(r < 10 ? 1 : 0)}%/h`;
 
-// Which window the gauge shows: the SHORTEST window that's actively burning
-// (so an active 5-hour beats a slow 7-day trend while you're coding); if none is
-// active, the one with the highest pace. Needle fills at 3× that window's
-// sustainable rate (100%/hours), so a fast 5-hour and a slow 7-day stay readable.
-const PACE_ACTIVE = 0.1;                          // ≥10% of the sustainable rate
-function bindingBurn(data, now, windows) {        // windows shortest-first
-  let fb = null;
-  for (const w of windows) {
-    // Lookback = 1/60th of the window (5h→5min, 7d→2.8h) so a coarse, slow meter
-    // like the 7-day one still yields a real slope.
-    const rate = burnRate(data[0], data[w.idx], now, w.hours * 60);
-    const pace = (rate * w.hours) / 100;          // 1 = on track to exhaust at reset
-    const cand = { rate, maxRate: 300 / w.hours, hours: w.hours, pace };
-    if (pace >= PACE_ACTIVE) return cand;         // shortest active window wins
-    if (!fb || pace > fb.pace) fb = cand;
+// The forecast for a meter, and the note beside it. `p` is the forecast row's
+// verdict; a straight-line fallback verdict has no numbers, so `fallback()` supplies one.
+function showOutlook(key, cur, p, fallback) {
+  const el = $(key + "Fc");
+  if (!el) return;
+  let text = "", warn = false, atReset = p && p.atReset, hitMs = p && p.hitMs != null ? p.hitMs : null;
+  if (hitMs != null) {
+    text = `runs out in ${fmtDur((hitMs - Date.now()) / 1000)}`; warn = true;
+  } else if (p && p.cls === "warn") {
+    text = p.msg.replace(/ \(.*$/, ""); warn = true;          // "at the limit", "hits 100% in 3h"
+    if (cur < 99.5) hitMs = Date.now() + 1;                    // fallback verdict: red, no time
+  } else if (p && p.cls === "muted") {
+    text = p.msg.split(" · ")[0]; atReset = null;              // "just reset — gathering data…"
+  } else if (p && atReset == null) {
+    atReset = fallback();
   }
-  return fb;
+  el.textContent = text;
+  el.className = "dial-sub " + (warn ? "warn" : "muted");
+  meter(key).outlook(atReset ?? null, cur >= 99.5 ? null : hitMs);
 }
-// Each gauge tracks one window on a fixed dial: Claude's 5-hour at 0–100 %/h,
-// Codex's 7-day at 0–8 %/h (its rate is inherently small). Needles peg + vibrate
-// past the max; the readout keeps climbing.
-const CLAUDE_MAX = 100;   // %/h full-scale for Claude's 5-hour dial
-const CODEX_MAX = 8;      // %/h full-scale for Codex's 7-day dial
-const WIN_CODEX = [{ idx: 2, hours: 168 }];   // Codex: 7-day only (no real 5-hour limit)
 
+// Each meter shows its own window's burn rate.
 function updateGauges() {
   const now = Date.now() / 1000;
-  for (const [g, st] of [[claudeGauge, C], [claude2Gauge, K]]) {
-    if (!g) continue;
-    if (!st.last || hasFiveHour(st)) {
-      g.update(burnRate(st.data[0], st.data[1], now, 5 * 60), CLAUDE_MAX, 5);   // 5-hour rate
-    } else {                                                   // weekly only: read it like Codex's
-      g.update(burnRate(st.data[0], st.data[2], now, 168 * 60), CODEX_MAX, 168);
-    }
+  for (const st of CLAUDES) {
+    meter(st.p + "fh").rate(burnRate(st.data[0], st.data[1], now, SCALES[5].lookback), 5);
+    // A model-scoped weekly limit has no stored history, so no rate of its own.
+    meter(st.p + "sd").rate(scopedLimit(st) ? null : burnRate(st.data[0], st.data[2], now, SCALES[168].lookback), 168);
   }
-  if (codexGauge) {
-    const b = bindingBurn(X.data, now, WIN_CODEX);           // 7-day rate + lookback
-    codexGauge.update(b.rate, CODEX_MAX, b.hours);
-  }
+  meter("cx5").rate(burnRate(X.data[0], X.data[1], now, SCALES[5].lookback), 5);
+  meter("cx7").rate(burnRate(X.data[0], X.data[2], now, SCALES[168].lookback), 168);
 }
 
 // ---- staleness ----
@@ -1625,9 +1615,7 @@ window.showLatest = async () => {
   await resync();
   for (const st of CLAUDES) renderClaudeForecast(st);
   renderCodexForecast();
-  renderConsumed();
   updateGauges();
-  snapGauges();
   lastTick = Date.now();                  // the pause is handled: don't resync again
   reveal();
 };
@@ -1799,7 +1787,7 @@ function tick() {
   lastTick = now;
   if (paused) resync(); else checkStale();
   for (const st of CLAUDES) { renderClaudeResets(st); renderClaudeForecast(st); }
-  document.querySelectorAll("#cxBars [data-reset]").forEach((el) => {
+  document.querySelectorAll("#colCodex [data-reset]").forEach((el) => {
     el.textContent = countdown(el.dataset.reset);
   });
   renderCodexForecast();
@@ -1856,7 +1844,6 @@ window.addEventListener("load", () => {
   wireAcct();
   wireScope();
   wireRange();
-  wireForecastModel();
   wireAccuracy();
   wireChatTip();
   wireSettings();
@@ -1864,9 +1851,13 @@ window.addEventListener("load", () => {
   wireChatMode();
   wireUpdate();
   wireCheckUpdate();
-  claudeGauge = makeGauge("claudeGauge", [0.3, 0.6]);   // 0–100 %/h dial, red from 60
-  claude2Gauge = makeGauge("k_claudeGauge", [0.3, 0.6]);
-  codexGauge = makeGauge("codexGauge");                  // window-relative, red from 2× sustainable
+  for (const st of CLAUDES) {
+    makeMeter(st.p + "fh", "--fh", "5-hour", "claude");
+    makeMeter(st.p + "sd", "--sd", "7-day", "claude");
+  }
+  makeMeter("cx5", "--cx1", "5-hour", "codex");
+  makeMeter("cx7", "--cx2", "7-day", "codex");
+  requestAnimationFrame(smokeLoop);
   connect();
   // Never stay hidden: if the server is down there is still a status to show.
   setTimeout(reveal, 1500);
