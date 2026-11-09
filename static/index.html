@@ -130,19 +130,28 @@
     <section class="card ccost" id="ccost" hidden>
       <div class="cc-head">
         <span class="cc-title">API-equivalent spend</span>
-        <span class="muted cc-sub">Claude Code + Codex token logs priced at API list rates · comparison only</span>
+        <span class="cc-info" tabindex="0" aria-label="About these numbers">i<span class="cc-info-tip">Claude Code and Codex token logs, priced at the API's list rates. A comparison only: it's not what your plan costs.</span></span>
+        <div id="ccRange" class="seg seg-sm">
+          <button data-r="d1">24h</button>
+          <button data-r="d7">7 days</button>
+          <button data-r="d30">30 days</button>
+          <button data-r="all">All time</button>
+        </div>
       </div>
-      <div class="cc-nums">
-        <div class="cc-metric"><div class="k">Last 24h</div><div id="ccD1" class="v">–</div></div>
-        <div class="cc-metric"><div class="k">Last 7 days</div><div id="ccD7" class="v">–</div></div>
-        <div class="cc-metric"><div class="k">All time</div><div id="ccTotal" class="v">–</div></div>
+      <div class="cc-body">
+        <div class="cc-sum">
+          <div id="ccBig" class="cc-big">–</div>
+          <div id="ccBigK" class="cc-big-k muted"></div>
+          <div id="ccSplit" class="cc-split"></div>
+          <div id="ccProv"></div>
+          <div id="ccOther" class="cc-other"></div>
+        </div>
+        <div class="cc-chats">
+          <div class="cc-ls-head"><span>Priciest chats</span><span id="ccCount" class="muted"></span></div>
+          <div id="ccRows"></div>
+          <button id="ccMore" class="cc-more linkbtn" hidden></button>
+        </div>
       </div>
-      <div id="ccBreak" class="cc-break muted"></div>
-      <div id="ccMode" class="seg cc-seg">
-        <button data-m="all">All</button>
-        <button data-m="today">Today</button>
-      </div>
-      <div id="ccTop" class="acc-body"></div>
     </section>
 
     <footer class="controls card">

@@ -80,31 +80,6 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
   padding: 1px 5px; border-radius: 5px;
 }
 
-.cc-seg { margin-top: 14px; }
-#ccTop { margin-top: 10px; position: relative; }
-#ccTip {
-  /* Inside the bar area, not above it — anchoring to the card's top edge would
-     push the box out of the card and get it clipped. */
-  position: absolute; top: 0;
-  pointer-events: none; z-index: 5; min-width: 190px;
-  background: var(--card); color: var(--ink);
-  border: 1px solid var(--line); border-radius: 8px;
-  padding: 8px 10px; font-size: 12px;
-  box-shadow: 0 6px 20px -6px rgba(16,24,40,.28);
-}
-#ccTip { max-width: 320px; }
-#ccTip .tip-t { font-weight: 600; margin-bottom: 2px; }
-#ccTip .tip-sub { color: var(--muted); font-size: 11px; margin-bottom: 5px; word-break: break-all; }
-#ccTip .tip-r b { white-space: nowrap; }
-#ccTip .tip-r { display: flex; justify-content: space-between; gap: 14px; color: var(--muted); }
-#ccTip .tip-r b { color: var(--ink); font-variant-numeric: tabular-nums; }
-.cc-bars { display: flex; align-items: flex-end; gap: 2px; height: 110px; }
-.cc-bar { flex: 1; min-width: 3px; border-radius: 2px 2px 0 0; transition: opacity .12s; }
-.cc-bar.cl { background: var(--fh); }
-.cc-bar.cx { background: var(--cx1); }
-.cc-bars:hover .cc-bar { opacity: .45; }
-.cc-bars .cc-bar:hover { opacity: 1; }
-.cc-axis { display: flex; justify-content: space-between; font-size: 11px; margin-top: 6px; }
 
 .gear { padding: 5px 10px; font-size: 14px; line-height: 1; }
 .settings { padding: 14px 16px; margin-top: -12px; margin-bottom: 24px; }
@@ -292,17 +267,53 @@ table.acc-tbl tr.active td:first-child::after { content: " · in use"; color: va
 .btn:hover { border-color: var(--fh); color: var(--fh); }
 .upd { margin-left: auto; font-size: 12px; }
 
-/* API-equivalent spend strip (full width) */
-.ccost { padding: 18px 20px; margin-bottom: 24px; }
-.cc-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+/* API-equivalent spend (full width): one range drives the total, the
+   Claude/Codex split and the chat list. Side by side when there's room. */
+.ccost { padding: 18px 20px; margin-bottom: 24px; container-type: inline-size; }
+.cc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+.cc-head .seg { margin-left: auto; }
 .cc-title { font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
 .cc-sub { font-size: 11px; }
-.cc-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-.cc-metric { text-align: center; }
-.cc-metric .k { font-size: 12px; color: var(--muted); }
-.cc-metric .v { font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
-.cc-break { margin-top: 14px; font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; }
-.cc-break b { color: var(--ink); font-weight: 600; }
+.cc-info { position: relative; width: 15px; height: 15px; border-radius: 50%; border: 1.5px solid var(--muted);
+  color: var(--muted); font-size: 9px; font-weight: 700; display: inline-grid; place-items: center; cursor: default; }
+.cc-info-tip { display: none; position: absolute; top: calc(100% + 8px); left: -8px; z-index: 6; width: 260px;
+  background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px; font-weight: 400; line-height: 1.45;
+  box-shadow: 0 6px 20px -6px rgba(16,24,40,.28); }
+.cc-info:hover .cc-info-tip, .cc-info:focus .cc-info-tip { display: block; }
+.cc-body { display: grid; grid-template-columns: 1fr; gap: 22px; }
+@container (min-width: 900px) { .cc-body { grid-template-columns: 280px 1fr; gap: 36px; } }
+.cc-big { font-size: 36px; font-weight: 700; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.cc-big-k { font-size: 12px; margin-top: 6px; }
+.cc-split { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; margin: 16px 0 10px; background: var(--line); }
+.cc-split .cl, .cc-sw.cl { background: var(--fh); }
+.cc-split .cx, .cc-sw.cx { background: var(--cx1); }
+.cc-prov { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; font-variant-numeric: tabular-nums; }
+.cc-prov b { margin-left: auto; font-weight: 600; }
+.cc-prov .pc { color: var(--muted); width: 36px; text-align: right; }
+.cc-sw { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.cc-other { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); display: grid; gap: 3px; }
+.cc-other div { display: flex; justify-content: space-between; }
+.cc-other b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cc-chats { min-width: 0; }
+.cc-ls-head { display: flex; align-items: baseline; gap: 10px; font-size: 12px; margin-bottom: 2px; }
+.cc-ls-head span:first-child { font-weight: 600; font-size: 13px; }
+.cc-ls-head span:last-child { margin-left: auto; text-align: right; }
+.cc-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) minmax(60px, 160px) 58px 56px; align-items: center;
+  gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+.cc-row:first-child { border-top: 0; }
+.cc-row .t, .cc-row .s { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-row .t { font-weight: 500; }
+.cc-row .s, .cc-row .x { font-size: 11.5px; color: var(--muted); }
+.cc-row .x { display: none; white-space: normal; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.cc-row.open .x { display: block; }
+.cc-row .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.cc-row .bar i { display: block; height: 100%; border-radius: 3px; }
+.cc-row .c { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cc-row .w { text-align: right; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.cc-row:hover .t { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.cc-empty { font-size: 13px; padding: 8px 0; }
+.cc-more { margin-top: 6px; font-size: 12.5px; font-weight: 500; color: var(--ink); }
 
 /* uPlot theming */
 .u-axis { color: var(--muted); }

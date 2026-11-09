@@ -1020,7 +1020,7 @@ function drawSamplesSoon() {
 // ---- websocket ----
 let ws = null, backoff = 500;
 let bootVersion = null;   // the version this page's own scripts came from
-// ---- API-equivalent spend (Claude Code token logs priced at list rates) ----
+// ---- API-equivalent spend (Claude Code + Codex token logs priced at list rates) ----
 function fmtMoney(n) {
   if (n == null) return "–";
   if (n >= 1000) return "$" + Math.round(n).toLocaleString();
@@ -1036,125 +1036,133 @@ let ccClaude = null, ccCodex = null;
 function renderCC(cc) { if (cc) { ccClaude = cc; renderCost(); } }
 function renderXcost(xc) { if (xc) { ccCodex = xc; renderCost(); } }
 
-// Combined Claude + Codex totals, with a per-provider split underneath.
+// One range drives the whole card: the total, the Claude/Codex split and the
+// chat list. Its key is both the snapshot's total field and its chats key.
+const CC_RANGES = {
+  d1: { total: "d1", label: "last 24 hours", short: "Last 24h" },
+  d7: { total: "d7", label: "last 7 days", short: "Last 7 days" },
+  d30: { total: "d30", label: "last 30 days", short: "Last 30 days" },
+  all: { total: "total", label: "all time", short: "All time" },
+};
+const CC_SHOWN = 6;                    // chats listed before "Show more"
+let ccRange = CC_RANGES[localStorage.getItem("ccRange")] ? localStorage.getItem("ccRange") : "d7";
+let ccExpanded = false;
+const ccOpen = new Set();              // chats whose detail line is unfolded, by key
+
+const ccEsc = (t) => { const d = document.createElement("div"); d.textContent = t == null ? "" : String(t); return d.innerHTML; };
+const ccKey = (r) => r.src + "|" + r.when + "|" + r.label;
+
 function renderCost() {
   if (!ccClaude && !ccCodex) return;
   $("ccost").hidden = false;
-  const sum = (k) => (ccClaude ? ccClaude[k] : 0) + (ccCodex ? ccCodex[k] : 0);
-  $("ccD1").textContent = fmtMoney(sum("d1"));
-  $("ccD7").textContent = fmtMoney(sum("d7"));
-  $("ccTotal").textContent = fmtMoney(sum("total"));
-  const parts = [];
-  if (ccClaude) parts.push(`Claude <b>${fmtMoney(ccClaude.total)}</b>`);
-  if (ccCodex) parts.push(`Codex <b>${fmtMoney(ccCodex.total)}</b>`);
-  $("ccBreak").innerHTML = parts.join("  ·  ") + (parts.length ? "  · all-time" : "");
-  renderTopChats();
+  const provs = [["Claude", "cl", ccClaude], ["Codex", "cx", ccCodex]].filter((p) => p[2]);
+  const tot = (r) => provs.reduce((a, [, , p]) => a + (p[CC_RANGES[r].total] || 0), 0);
+  const R = CC_RANGES[ccRange];
+  const sum = tot(ccRange);
+
+  $("ccRange").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.r === ccRange));
+  $("ccBig").textContent = fmtMoney(sum);
+  $("ccBigK").textContent = `${R.label} at API list rates`;
+
+  // The split bar doubles as the colour legend for the chat list.
+  const parts = provs.map(([name, cls, p]) => ({ name, cls, v: p[R.total] || 0 }));
+  $("ccSplit").hidden = provs.length < 2;
+  $("ccSplit").innerHTML = sum > 0
+    ? parts.filter((x) => x.v > 0).map((x) => `<div class="${x.cls}" style="flex:${x.v}"></div>`).join("")
+    : "";
+  $("ccProv").innerHTML = parts.map((x) =>
+    `<div class="cc-prov"><span class="cc-sw ${x.cls}"></span>${x.name}<b>${fmtMoney(x.v)}</b>` +
+    (provs.length > 1 ? `<span class="pc">${sum > 0 ? Math.round((100 * x.v) / sum) : 0}%</span>` : "") +
+    `</div>`).join("");
+  $("ccOther").innerHTML = Object.keys(CC_RANGES).filter((r) => r !== ccRange).map((r) =>
+    `<div><span>${CC_RANGES[r].short}</span><b>${fmtMoney(tot(r))}</b></div>`).join("");
+
+  renderChats(provs);
 }
 
-// Priciest chats as bars: x is when the chat started, y is that chat's share of
-// its provider's all-time spend. Percent rather than dollars because the rates
-// are assumptions while the shares are not.
-function renderTopChats() {
-  const k = ccMode === "today" ? "today" : "top";
-  const rows = [
-    ...((ccClaude && ccClaude[k]) || []).map((r) => ({ ...r, src: "Claude" })),
-    ...((ccCodex && ccCodex[k]) || []).map((r) => ({ ...r, src: "Codex" })),
-  ].filter((r) => r.pct > 0);
-  // Placed by LAST use, not creation. A long thread accrues most of its cost
-  // late, and plotting it on the day it was opened puts the bar days away from
-  // the spending it represents — and out of step with the Today filter, which
-  // has always asked when a session was last active.
-  const at = (r) => new Date(r.end || r.when);
-  // Today's chats all share one date, so an x axis of dates says nothing —
-  // rank them by spend instead. Across all history the date is the point.
-  rows.sort(ccMode === "today"
-    ? (a, b) => b.pct - a.pct
-    : (a, b) => at(a) - at(b));
+// The priciest chats last used in the range, both providers in one list. Each
+// row is the chat's whole cost, so a long thread counts in full in every range
+// it touched.
+function renderChats(provs) {
+  const R = CC_RANGES[ccRange];
+  let n = 0;
+  const rows = [];
+  for (const [name, cls, p] of provs) {
+    const c = p.chats && p.chats[ccRange];
+    if (!c) continue;
+    n += c.n || 0;
+    for (const r of c.rows || []) rows.push({ ...r, src: name, cls });
+  }
+  rows.sort((a, b) => b.cost - a.cost);
+  $("ccCount").textContent = !n ? "" : ccRange === "all"
+    ? `${n.toLocaleString()} chats`
+    : `${n.toLocaleString()} ${n === 1 ? "chat" : "chats"} used in the ${R.label}`;
   if (!rows.length) {
-    $("ccTop").innerHTML = `<div class="muted">no chats today yet</div>`;
+    $("ccRows").innerHTML = `<div class="cc-empty muted">No chats in the ${R.label}</div>`;
+    $("ccMore").hidden = true;
     return;
   }
-  const max = Math.max(...rows.map((r) => r.pct));
-  ccBars = rows;
-  const bars = rows.map((r, i) =>
-    `<div class="cc-bar ${r.src === "Codex" ? "cx" : "cl"}" data-i="${i}"` +
-    ` style="height:${(r.pct / max) * 100}%"></div>`).join("");
-  const ends = ccMode === "today"
-    ? ["most spent", "least"]
-    : [rows[0], rows[rows.length - 1]].map((r) =>
-        at(r).toLocaleDateString([], { month: "short", day: "numeric" }));
-  const mid = ccMode === "today"
-    ? `${rows.length} chats today · ${fmtMoney(rows.reduce((a, r) => a + r.cost, 0))}`
-    : "";
-  $("ccTop").innerHTML =
-    `<div class="cc-bars">${bars}</div><div id="ccTip" hidden></div>` +
-    `<div class="cc-axis muted"><span>${ends[0]}</span>` +
-    `<span>${mid}</span><span>${ends[1]}</span></div>`;
+  const shown = ccExpanded ? rows : rows.slice(0, CC_SHOWN);
+  const max = rows[0].cost || 1;
+  $("ccRows").innerHTML = shown.map((r) => {
+    // Claude Code titles newer sessions itself; older ones and every Codex
+    // session have none, so the working directory stands in.
+    const sub = [r.title ? r.label : null, r.branch, modelShort(r.model)].filter(Boolean);
+    const key = ccKey(r);
+    return `<div class="cc-row${ccOpen.has(key) ? " open" : ""}" data-k="${ccEsc(key)}">` +
+      `<span class="cc-sw ${r.cls}"></span>` +
+      `<div class="cc-txt"><div class="t">${ccEsc(r.title || r.label)}</div>` +
+      `<div class="s">${ccEsc(sub.join(" · "))}</div>` +
+      `<div class="x">${ccEsc(chatDetail(r))}</div></div>` +
+      `<div class="bar"><i class="cc-sw ${r.cls}" style="width:${Math.max(2, (100 * r.cost) / max)}%"></i></div>` +
+      `<div class="c">${fmtMoney(r.cost)}</div>` +
+      `<div class="w" title="last used">${ccEsc(ccDay(r.end || r.when))}</div></div>`;
+  }).join("");
+  const more = $("ccMore");
+  more.hidden = rows.length <= CC_SHOWN;
+  more.textContent = ccExpanded ? "Show fewer" : `Show ${rows.length - CC_SHOWN} more`;
 }
 
-let ccBars = [];
-let ccMode = localStorage.getItem("ccMode") === "today" ? "today" : "all";
+function ccDay(ts) {
+  const d = new Date(ts);
+  if (isNaN(d)) return "";
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 864e5);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
 
-function wireChatMode() {
-  const seg = $("ccMode");
+function chatDetail(r) {
+  const at = (t) => new Date(t).toLocaleString([], { month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false });
+  const out = [];
+  if (r.when) out.push("started " + at(r.when));
+  if (r.when && r.end) out.push("ran for " + fmtDur((new Date(r.end) - new Date(r.when)) / 1000));
+  if (r.calls) out.push(r.calls.toLocaleString() + " API calls");
+  if (r.pct) out.push(r.pct.toFixed(1) + "% of all " + r.src + " spend");
+  return out.join(" · ");
+}
+
+function wireCost() {
+  const seg = $("ccRange");
   if (!seg) return;
-  const paint = () => seg.querySelectorAll("button").forEach(
-    (b) => b.classList.toggle("on", b.dataset.m === ccMode));
-  paint();
   seg.addEventListener("click", (e) => {
     const b = e.target.closest("button");
-    if (!b) return;
-    ccMode = b.dataset.m;
-    localStorage.setItem("ccMode", ccMode);
-    paint();
-    renderTopChats();
+    if (!b || !CC_RANGES[b.dataset.r]) return;
+    ccRange = b.dataset.r;
+    ccExpanded = false;
+    localStorage.setItem("ccRange", ccRange);
+    renderCost();
   });
-}
-function wireChatTip() {
-  const host = $("ccTop");
-  if (!host) return;
-  const esc = (t) => { const d = document.createElement("div"); d.textContent = t; return d.innerHTML; };
-  host.addEventListener("mousemove", (e) => {
-    const bar = e.target.closest(".cc-bar");
-    const tip = $("ccTip");
-    if (!tip) return;
-    // Bars have gaps between them. Hiding whenever the cursor lands in a gap made
-    // the box strobe on the way across, so it only clears on mouseleave.
-    if (!bar) return;
-    const r = ccBars[+bar.dataset.i];
-    if (!r) return;
-    // Claude Code titles newer sessions itself (ai-title); older ones and every
-    // Codex session have none, so fall back to the working directory.
-    const when = new Date(r.when);
-    const rows_ = [
-      [r.src + " · " + r.model, ""],
-      ["started", when.toLocaleString([], { month: "short", day: "numeric",
-        hour: "2-digit", minute: "2-digit", hour12: false })],
-    ];
-    if (r.end) {
-      rows_.push(["last used", new Date(r.end).toLocaleString([], {
-        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })]);
-      rows_.push(["ran for", fmtDur((new Date(r.end) - when) / 1000)]);
-    }
-    if (r.branch) rows_.push(["branch", r.branch]);
-    if (r.calls) rows_.push(["API calls", r.calls.toLocaleString()]);
-    rows_.push(["share of " + r.src, r.pct.toFixed(1) + "%"]);
-    rows_.push(["API-equivalent", fmtMoney(r.cost)]);
-    tip.innerHTML =
-      `<div class="tip-t">${esc(r.title || r.label)}</div>` +
-      (r.title ? `<div class="tip-sub">${esc(r.label)}</div>` : "") +
-      rows_.map(([k, v]) => `<div class="tip-r"><span>${esc(k)}</span>` +
-        (v ? `<b>${esc(v)}</b>` : "") + `</div>`).join("");
-    tip.hidden = false;
-    // Parked on whichever side the cursor is not, rather than following it. A box
-    // that tracks the mouse jitters on every pixel of movement and sits under the
-    // pointer where it hides the very bar you are reading.
-    const x = e.clientX - host.getBoundingClientRect().left;
-    const left = x > host.clientWidth / 2;
-    tip.style.left = left ? "0px" : "auto";
-    tip.style.right = left ? "auto" : "0px";
+  $("ccMore").addEventListener("click", () => { ccExpanded = !ccExpanded; renderCost(); });
+  // A click unfolds the chat's detail line; toggled in place, no re-render.
+  $("ccRows").addEventListener("click", (e) => {
+    const row = e.target.closest(".cc-row");
+    if (!row) return;
+    const k = row.dataset.k;
+    if (ccOpen.has(k)) ccOpen.delete(k); else ccOpen.add(k);
+    row.classList.toggle("open", ccOpen.has(k));
   });
-  host.addEventListener("mouseleave", () => { const t = $("ccTip"); if (t) t.hidden = true; });
 }
 
 // ---- changelog ----
@@ -1877,10 +1885,9 @@ window.addEventListener("load", () => {
   wireScope();
   wireRange();
   wireAccuracy();
-  wireChatTip();
   wireSettings();
   wireChangelog();
-  wireChatMode();
+  wireCost();
   wireUpdate();
   wireCheckUpdate();
   for (const st of CLAUDES) {
