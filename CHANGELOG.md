@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.26.0] - 2026-11-09
 - The API-equivalent spend card is simpler: one range picker (24h, 7 days, 30 days or All time) sets the total, a bar splits it between Claude and Codex, and below it is a list of your most expensive chats in that range. Click a chat for its details. The first start after updating takes a little longer while it re-reads your logs.
 
 ## [0.25.0] - 2026-11-08
