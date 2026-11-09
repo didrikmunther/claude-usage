@@ -34,6 +34,11 @@ class Store:
         for col in ("cp", "cs", "cc", "kh", "kd"):
             if col not in have:
                 self._db.execute(f"ALTER TABLE samples ADD COLUMN {col} REAL")
+        # ca/ka = the org the Claude numbers (fh/sd) and the CLI's (kh/kd) came
+        # from, so each side shows only the account it's signed in to now.
+        for col in ("ca", "ka"):
+            if col not in have:
+                self._db.execute(f"ALTER TABLE samples ADD COLUMN {col} TEXT")
         # Stretches with no internet: [start, end] ms of the polls that failed
         # for it. Kept apart from samples because the worst outages store no
         # sample at all.
@@ -87,7 +92,45 @@ class Store:
                 "INSERT OR REPLACE INTO config (key, value) VALUES ('offline_backfilled', '1')")
             self._db.commit()
 
-    COLS = ("ts", "fh", "sd", "so", "sn", "credits", "cp", "cs", "cc", "kh", "kd")
+    COLS = ("ts", "fh", "sd", "so", "sn", "credits", "cp", "cs", "cc", "kh", "kd", "ca", "ka")
+
+    def backfill_accounts(self, claude_org: str | None, cli_org: str | None) -> None:
+        """Give samples from before accounts were stored an owner, once. The
+        Claude numbers go to the org signed in now. So do the CLI's, unless it
+        is signed in to another org than the desktop app: then it switched
+        account at some point, taken as the first drop in its 7-day after it
+        last read the same as the desktop app (its readings lag the desktop's
+        by a poll or two, so equal readings alone don't mark the old account)."""
+        with self._lock:
+            done = self._db.execute(
+                "SELECT value FROM config WHERE key = 'accounts_backfilled'").fetchone()
+            if done or not claude_org:
+                return
+            self._db.execute("UPDATE samples SET ca = ? WHERE ca IS NULL AND "
+                             "(fh IS NOT NULL OR sd IS NOT NULL)", (claude_org,))
+            if cli_org:
+                if cli_org != claude_org:
+                    last_eq = self._db.execute(
+                        "SELECT MAX(ts) FROM samples WHERE ka IS NULL AND kd = sd AND sd > 0"
+                    ).fetchone()[0]
+                    if last_eq is not None:
+                        switch, prev = None, None
+                        for ts, kd in self._db.execute(
+                                "SELECT ts, kd FROM samples WHERE ka IS NULL AND kd IS NOT NULL "
+                                "AND ts >= ? ORDER BY ts", (last_eq,)):
+                            if prev is not None and kd < prev:
+                                switch = ts
+                                break
+                            prev = kd
+                        self._db.execute(
+                            "UPDATE samples SET ka = ? WHERE ka IS NULL AND ts < ? AND "
+                            "(kh IS NOT NULL OR kd IS NOT NULL)",
+                            (claude_org, switch if switch is not None else 2**62))
+                self._db.execute("UPDATE samples SET ka = ? WHERE ka IS NULL AND "
+                                 "(kh IS NOT NULL OR kd IS NOT NULL)", (cli_org,))
+            self._db.execute(
+                "INSERT OR REPLACE INTO config (key, value) VALUES ('accounts_backfilled', '1')")
+            self._db.commit()
 
     def insert(self, row: dict) -> None:
         vals = {c: row.get(c) for c in self.COLS}

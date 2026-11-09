@@ -136,6 +136,10 @@ class Hub:
         self.forecast_model: str = DEFAULT_FORECAST_MODEL          # Claude's
         self.forecast_model_codex: str = DEFAULT_FORECAST_MODEL
         self.claude_account: str = "desktop"
+        # The org each Claude source is signed in to now; history from any
+        # other account is kept but not shown (see scoped).
+        self.claude_org: str | None = None    # fh/sd: the desktop app's, or the CLI's without it
+        self.cli_org: str | None = None       # kh/kd: the CLI's, next to the desktop app
         self.working_days: str = DEFAULT_WORKING_DAYS
         self.changelog_seen: str | None = None
         self.latest: dict | None = None
@@ -184,6 +188,54 @@ class Hub:
             seen = changelog.previous_version() or updater.current_version()
             self.store.set_changelog_seen(seen)
         self.changelog_seen = seen
+        self.claude_org, self.cli_org = self._current_orgs()
+        self.store.backfill_accounts(self.claude_org, self.cli_org)
+
+    def _current_orgs(self) -> tuple[str | None, str | None]:
+        cli = claude_cli.account_org()
+        if self.claude_src == "desktop":
+            return self.org, cli
+        return (cli if self.claude_src == "cli" else None), None
+
+    def scoped(self, rows: list[dict]) -> list[dict]:
+        """History as the signed-in accounts see it: another account's Claude
+        numbers are blanked, so a switched account doesn't read as a reset."""
+        out = []
+        for r in rows:
+            r = dict(r)
+            ca, ka = r.pop("ca", None), r.pop("ka", None)
+            if ca != self.claude_org:
+                r["fh"] = r["sd"] = r["so"] = r["sn"] = None
+            if ka != self.cli_org:
+                r["kh"] = r["kd"] = None
+            out.append(r)
+        return out
+
+    def init_payload(self) -> dict:
+        full_since = poller.now_ms() - HISTORY_FULL_DAYS * 86400 * 1000
+        return {
+            "type": "init",
+            "history": self.scoped(self.store.history_overview(full_since, HISTORY_BUCKET_MS)),
+            "history_full_since": full_since,
+            "offline": self.store.offline_spans(),
+            "claude": self.latest,
+            "claude2": self.claude2_latest,
+            "codex": self.codex_latest,
+            "codex_available": self.codex_available,
+            "cc": self.cc_latest,
+            "cc_available": self.cc_available,
+            "xcost": self.xcost_latest,
+            "xcost_available": self.xcost_available,
+            "update": self.update_info,
+            "changelog": self.changelog_pending(),
+            "changelog_from": self.changelog_seen,
+            "status": self.status,
+            "interval": self.interval,
+            **self.forecast_models(),
+            "claude_account": self.claude_account,
+            "working_days": self.working_days,
+            "limits": {"min": MIN_INTERVAL, "max": MAX_INTERVAL},
+        }
 
     def _pick_claude_source(self) -> str | None:
         """Prefer the desktop app's cookie endpoint — it tolerates fast (60s)
@@ -259,7 +311,7 @@ class Hub:
         each scaled to the window that platform is burning fastest relative to."""
         if not self.store:
             return {"claude_rate": 0.0, "codex_rate": 0.0, "claude_frac": 0.0, "codex_frac": 0.0}
-        hist = self.store.history(since_ms=poller.now_ms() - 36 * 3600 * 1000)  # ≥ longest lookback (12× 2.8h)
+        hist = self.scoped(self.store.history(since_ms=poller.now_ms() - 36 * 3600 * 1000))  # ≥ longest lookback (12× 2.8h)
         ck, wk = ("kh", "kd") if self._shows_cli() else ("fh", "sd")   # the switched-to Claude
         if hist and hist[-1].get(ck) is not None:
             cr = burn_rate(hist, ck, lookback_ms=5 * 60 * 1000)   # Claude: 5-hour on a 0–100 dial
@@ -285,7 +337,7 @@ class Hub:
             return self._outlook
         rates = self.rates()
         full_since = poller.now_ms() - HISTORY_FULL_DAYS * 86400 * 1000
-        hist = self.store.history_overview(full_since, HISTORY_BUCKET_MS) if self.store else []
+        hist = self.scoped(self.store.history_overview(full_since, HISTORY_BUCKET_MS)) if self.store else []
         days = [int(d) for d in self.working_days.split(",") if d != ""]
 
         def one(col, pct, reset, win_s, model, rate, frac):
@@ -481,6 +533,7 @@ class Hub:
         row = {"ts": ts}
         claude_live = codex_live = claude2_live = None
         errs = []
+        orgs = self._current_orgs()
         net_down = []                             # fetches that never got an answer
 
         if self.claude_src and time.time() >= self._claude_next:
@@ -491,6 +544,7 @@ class Hub:
                 if res:
                     crow, claude_live = res
                     row.update(crow)
+                    row["ca"] = self._current_orgs()[0]   # after a 404 recovery the org may be new
                 self._claude_streak = 0
                 self._note_ok("Claude")
             except claude_cli.RateLimited as e:
@@ -509,7 +563,7 @@ class Hub:
                     timeout=FETCH_TIMEOUT)
                 if res:
                     krow, claude2_live = res
-                    row.update(kh=krow["fh"], kd=krow["sd"])
+                    row.update(kh=krow["fh"], kd=krow["sd"], ka=orgs[1])
                 self._note_ok("Claude (terminal)")
             except Exception as e:
                 self._note_error(errs, "Claude (terminal)", e)
@@ -548,6 +602,19 @@ class Hub:
                 # Hub.loop and stop sampling for good, while the server went on
                 # serving the frozen history as if it were current.
                 errs.append(self._errmsg("store", e))
+
+        # Signed in to another account: every page reloads its history, so the
+        # chart holds only the new account's.
+        now_orgs = (row.get("ca") or self.claude_org if claude_live else self.claude_org,
+                    orgs[1] if claude2_live else self.cli_org)
+        if stored and now_orgs != (self.claude_org, self.cli_org):
+            print(f"[claude] signed-in account changed; history rescoped", flush=True)
+            self.claude_org, self.cli_org = now_orgs
+            if claude_live:
+                self.latest = claude_live
+            if claude2_live:
+                self.claude2_latest = claude2_live
+            await self.broadcast(self.init_payload())
 
         if stored:
             if claude_live:
@@ -696,38 +763,15 @@ async def api_history(since: int | None = None, until: int | None = None):
     # A bounded range is the dashboard asking for full detail of a stretch it
     # holds only thinned (see history_overview); cap it so one ask stays small.
     limit = HISTORY_DETAIL_MAX if until is not None else 20000
-    return JSONResponse({"history": hub.store.history(since_ms=since, until_ms=until,
-                                                      limit=limit)})
+    return JSONResponse({"history": hub.scoped(hub.store.history(since_ms=since, until_ms=until,
+                                                                 limit=limit))})
 
 
 @app.websocket("/ws")
 async def ws(sock: WebSocket):
     await sock.accept()
     hub.clients.add(sock)
-    full_since = poller.now_ms() - HISTORY_FULL_DAYS * 86400 * 1000
-    await sock.send_json({
-        "type": "init",
-        "history": hub.store.history_overview(full_since, HISTORY_BUCKET_MS),
-        "history_full_since": full_since,
-        "offline": hub.store.offline_spans(),
-        "claude": hub.latest,
-        "claude2": hub.claude2_latest,
-        "codex": hub.codex_latest,
-        "codex_available": hub.codex_available,
-        "cc": hub.cc_latest,
-        "cc_available": hub.cc_available,
-        "xcost": hub.xcost_latest,
-        "xcost_available": hub.xcost_available,
-        "update": hub.update_info,
-        "changelog": hub.changelog_pending(),
-        "changelog_from": hub.changelog_seen,
-        "status": hub.status,
-        "interval": hub.interval,
-        **hub.forecast_models(),
-        "claude_account": hub.claude_account,
-        "working_days": hub.working_days,
-        "limits": {"min": MIN_INTERVAL, "max": MAX_INTERVAL},
-    })
+    await sock.send_json(hub.init_payload())
     try:
         while True:
             msg = await sock.receive_json()

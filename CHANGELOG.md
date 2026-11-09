@@ -2,6 +2,9 @@
 
 What's new in each version, newest first.
 
+## [Unreleased]
+- Desktop and CLI each show only the account they're signed in to right now. Switching Claude Code or the desktop app to another email used to carry the old account's history into the new one, which looked like a sudden reset and threw off the forecast. Your old account's history is kept, just not shown.
+
 ## [0.26.0] - 2026-11-09
 - The API-equivalent spend card is simpler: one range picker (24h, 7 days, 30 days or All time) sets the total, a bar splits it between Claude and Codex, and below it is a list of your most expensive chats in that range. Click a chat for its details. The first start after updating takes a little longer while it re-reads your logs.
 

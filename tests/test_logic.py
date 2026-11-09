@@ -216,6 +216,9 @@ def _bare_hub():
     hub.interval = 0
     hub.latest = hub.codex_latest = hub.claude2_latest = None
     hub._track_cli = lambda: False    # not this machine's real ~/.claude.json
+    hub.org = hub.claude_org = "org-a"
+    hub.cli_org = None
+    hub._current_orgs = lambda: (hub.org, None)
     hub.codex_available = hub.cc_available = hub.xcost_available = False
     hub.status = {"state": "starting", "message": None, "ts": None}
     hub.clients = set()
@@ -681,3 +684,56 @@ def test_dial_for_menu_bar():
     assert dial_for("codex", {"pct": 20, "reset": reset, "rate": 0.1}, now)["at_reset"] == 20.0
     assert dials_for({"claude": None, "codex": {"pct": 20, "reset": reset}}, now)[0]["kind"] == "codex"
     assert dials_for(None) == []
+
+
+def test_history_is_scoped_to_the_signed_in_accounts():
+    hub = _bare_hub()
+    hub.claude_org, hub.cli_org = "org-a", "org-b"
+    rows = [{"ts": 1, "fh": 10.0, "sd": 50.0, "so": None, "sn": None, "kh": 10.0, "kd": 50.0, "ca": "org-a", "ka": "org-a"},
+            {"ts": 2, "fh": 11.0, "sd": 51.0, "so": None, "sn": None, "kh": 0.0, "kd": 1.0, "ca": "org-a", "ka": "org-b"},
+            {"ts": 3, "fh": 1.0, "sd": 2.0, "so": None, "sn": None, "kh": None, "kd": None, "ca": "org-c", "ka": None}]
+    out = hub.scoped(rows)
+    assert [(r["fh"], r["sd"], r["kh"], r["kd"]) for r in out] == [
+        (10.0, 50.0, None, None), (11.0, 51.0, 0.0, 1.0), (None, None, None, None)]
+    assert all("ca" not in r and "ka" not in r for r in out)
+
+
+def test_backfill_gives_old_samples_an_account(tmp_path):
+    from storage import Store
+    st = Store(str(tmp_path / "u.db"))
+    # The CLI matched the desktop app (same account), then moved to another one.
+    # Its readings lag the desktop's by a poll (97 next to 98, desktop missing once).
+    for ts, (sd, kd) in enumerate([(98.0, 97.0), (99.0, 99.0), (100.0, 99.0), (None, 0.0), (100.0, 1.0)]):
+        st.insert({"ts": ts, "sd": sd, "kd": kd})
+    st.insert({"ts": 9, "cs": 5.0})                    # Codex only: no Claude owner
+    st.backfill_accounts("org-desk", "org-cli")
+    got = {r["ts"]: (r["ca"], r["ka"]) for r in st.history(since_ms=0)}
+    assert got == {0: ("org-desk", "org-desk"), 1: ("org-desk", "org-desk"), 2: ("org-desk", "org-desk"),
+                   3: (None, "org-cli"), 4: ("org-desk", "org-cli"), 9: (None, None)}
+    st.insert({"ts": 10, "sd": 5.0})
+    st.backfill_accounts("org-x", "org-y")             # only ever once
+    assert st.history(since_ms=10)[0]["ca"] is None
+
+
+def test_a_new_cli_account_reloads_every_page():
+    import asyncio
+    hub = _bare_hub()
+    hub._track_cli = lambda: True
+    hub._current_orgs = lambda: ("org-a", "org-new")
+    hub.cli_org = "org-old"
+    hub._fetch_claude = lambda ts: ({"ts": ts, "sd": 50.0}, {"resets": {}})
+    hub._fetch_cli = lambda ts: ({"ts": ts, "fh": None, "sd": 1.0}, {"resets": {}})
+    rows = []
+
+    class _Store:
+        def insert(self, row): rows.append(row)
+    hub.store = _Store()
+    sent = []
+    hub.init_payload = lambda: {"type": "init"}
+
+    async def bc(msg): sent.append(msg["type"])
+    hub.broadcast = bc
+    asyncio.run(hub._poll_once())
+    assert rows[0]["ca"] == "org-a" and rows[0]["ka"] == "org-new"
+    assert hub.cli_org == "org-new"
+    assert sent[:2] == ["init", "sample"]
