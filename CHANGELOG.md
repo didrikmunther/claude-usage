@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.27.0] - 2026-11-09
 - Desktop and CLI each show only the account they're signed in to right now. Switching Claude Code or the desktop app to another email used to carry the old account's history into the new one, which looked like a sudden reset and threw off the forecast. Your old account's history is kept, just not shown.
 
 ## [0.26.0] - 2026-11-09
