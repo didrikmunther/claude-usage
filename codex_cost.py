@@ -64,7 +64,7 @@ def _add(dst: dict, lt: dict):
     dst["out"] = dst.get("out", 0) + (lt.get("output_tokens") or 0)
 
 
-CACHE_V = 3          # bump to force a full rescan when the shape changes
+CACHE_V = 4          # bump to force a full rescan when the shape changes
 
 
 def _load() -> dict:
@@ -155,7 +155,7 @@ def refresh() -> dict:
         models[f] = cur_model
         changed = True
 
-    cutoff = int(time.time() // 3600) - 24 * 7      # windows only need 7 days of buckets
+    cutoff = int(time.time() // 3600) - 24 * 30     # windows only need 30 days of buckets
     for h in [h for h in buckets if int(h) < cutoff]:
         del buckets[h]
         changed = True
@@ -194,24 +194,24 @@ def _window(buckets: dict, since_hour: int) -> dict:
     return agg
 
 
-def _today(ts: str | None) -> bool:
-    """Was this session still running today, in local time?"""
+def _epoch(ts: str | None) -> float | None:
     if not ts:
-        return False
+        return None
     try:
-        d = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
+        return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
     except ValueError:
-        return False
-    return d.date() == datetime.date.today()
+        return None
 
 
 def top_sessions(st: dict, pricing: dict, grand_total: float, n: int = 40,
-                 today: bool = False) -> list:
+                 since: float | None = None) -> dict:
     """Codex logs carry no project or title — the rollout filename's timestamp
     is the only handle on a session."""
     out = []
     for f, sess in (st.get("sessions") or {}).items():
-        if today and not _today(sess.get("end") or sess.get("t")):
+        # A chat belongs to a range if it was last used inside it: a long thread
+        # accrues most of its cost late, so its start date says little.
+        if since is not None and (_epoch(sess.get("end") or sess.get("t")) or 0) < since:
             continue
         total, by_model_s, _ = _cost(sess.get("m") or {}, pricing)
         if total <= 0:
@@ -226,22 +226,25 @@ def top_sessions(st: dict, pricing: dict, grand_total: float, n: int = 40,
                     "calls": sess.get("calls", 0), "end": sess.get("end"),
                     "src": sess.get("src")})
     out.sort(key=lambda x: -x["cost"])
-    return out[:n]
+    return {"n": len(out), "rows": out[:n]}
 
 
 def snapshot(st: dict) -> dict:
     pricing = _pricing()
-    now_h = int(time.time() // 3600)
+    now = time.time()
+    now_h = int(now // 3600)
     total, by_model, comp = _cost(st["alltime"], pricing)
+    d30, _, _ = _cost(_window(st["buckets"], now_h - 24 * 30), pricing)
     d7, _, _ = _cost(_window(st["buckets"], now_h - 24 * 7), pricing)
     d1, _, _ = _cost(_window(st["buckets"], now_h - 24), pricing)
     top = sorted(by_model.items(), key=lambda x: -x[1])[:5]
     return {
-        "total": total, "d7": d7, "d1": d1,
+        "total": total, "d30": d30, "d7": d7, "d1": d1,
         "by_model": [{"model": m, "cost": c} for m, c in top],
         "by_component": comp,
-        "top": top_sessions(st, pricing, total),
-        "today": top_sessions(st, pricing, total, today=True),
+        # Priciest chats per range, matching the totals above (all = all time).
+        "chats": {k: top_sessions(st, pricing, total, since=None if h is None else now - h * 3600)
+                  for k, h in (("d1", 24), ("d7", 24 * 7), ("d30", 24 * 30), ("all", None))},
     }
 
 
