@@ -1420,7 +1420,7 @@ const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const SMOKERS = new Set();   // each meter's puff timer, run from one animation loop
 function smokeLoop(now) { for (const f of SMOKERS) f(now); requestAnimationFrame(smokeLoop); }
 const METERS = new Map();   // "fh", "k_sd", "cx7", … → meter
-const NO_METER = { used() {}, outlook() {}, rate() {}, reset() {} };
+const NO_METER = { used() {}, outlook() {}, rate() {}, reset() {}, history() {} };
 const meter = (key) => METERS.get(key) || NO_METER;
 const escHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
@@ -1446,7 +1446,7 @@ function makeMeter(key, color, label, provider) {
   // the bar's right end (the cell's own reset line).
   const cdEl = leftEl.querySelector(".m-cd"), outEl = $(key + "Reset");
   if (outEl) outEl.innerHTML = `${RESET_ICON}<span></span>`;
-  const st = { used: null, reset: null, atReset: null, over: false, hitMs: null, note: "", rate: null, hours: 168 };
+  const st = { used: null, reset: null, atReset: null, over: false, hitMs: null, note: "", rate: null, hours: 168, days: [] };
 
   // Each block is its share of the bar; a block with nothing in it drops out.
   const paint = () => {
@@ -1477,6 +1477,28 @@ function makeMeter(key, color, label, provider) {
     fcEl.classList.toggle("tight", px(end - u - r) < 40);
     rateEl.classList.toggle("tight", px(r) < 56);
     paintReset(px(100 - end));
+    paintDays(u);
+  };
+  // Dashed lines split the used block where each calendar day ended; each day is
+  // its own hover zone. Rebuilt only when the split changes.
+  let daySig = "";
+  const paintDays = (u) => {
+    const ds = u >= 0.5 ? st.days : [];
+    const sig = ds.map((d) => d.from).join() + "|" + u.toFixed(2);
+    if (sig === daySig) return;
+    daySig = sig;
+    usedEl.querySelectorAll(".m-day").forEach((e) => e.remove());
+    ds.forEach((d, i) => {
+      const from = Math.min(d.from, u), to = i + 1 < ds.length ? Math.min(ds[i + 1].from, u) : u;
+      if (to - from < 0.05) return;                 // nothing used that day: no zone, no extra line
+      const z = document.createElement("i");
+      z.className = "m-day" + (from >= 0.05 ? " split" : "");
+      z.dataset.part = "day";
+      z.dataset.i = i;
+      z.style.left = (from / u) * 100 + "%";
+      z.style.width = ((to - from) / u) * 100 + "%";
+      usedEl.append(z);
+    });
   };
   let leftPx = 0;
   const paintReset = (w = leftPx) => {
@@ -1513,7 +1535,19 @@ function makeMeter(key, color, label, provider) {
 
   const resetsIn = () => (st.reset ? ` It resets in ${countdown(st.reset)}.` : "");
   const hoursLeft = () => (st.reset ? (new Date(st.reset).getTime() - Date.now()) / 3600e3 : null);
+  let dayIdx = 0;
+  const dayTip = () => {
+    const ds = st.days, d = ds[dayIdx];
+    if (!d) return ["", ""];
+    const next = ds[dayIdx + 1], amt = Math.max(0, (next ? next.from : st.used ?? 0) - d.from);
+    const pace = ` An even pace is about ${Math.round(100 / 7)}% a day.`;
+    const day = new Date(d.start);
+    if (!next) return [`Today · ${Math.round(amt)}%`, `Used so far today.${pace}`];
+    const wd = day.toLocaleDateString(undefined, { weekday: "long" });
+    return [`${wd} · ${Math.round(amt)}%`, `Used on ${wd}${dayIdx === 0 ? " after the reset" : ""}.${pace}`];
+  };
   const tips = {
+    day: dayTip,
     used: () => [`Used · ${Math.round(st.used ?? 0)}%`,
       `How much of your ${label} limit you've used since it last reset.`],
     fc: () => st.over
@@ -1543,6 +1577,7 @@ function makeMeter(key, color, label, provider) {
   const keep = () => clearTimeout(hideTimer);
   const show = (part, target) => {
     keep();
+    if (part === "day") dayIdx = +target.dataset.i;
     if (!tips[part] || (part === "fc" && !st.over && st.atReset == null) || (part === "rate" && st.rate == null)) { tip.hidden = true; return; }
     const [title, text] = tips[part]();
     const picker = part === "fc" || (part === "left" && st.atReset == null && !st.over);
@@ -1570,11 +1605,21 @@ function makeMeter(key, color, label, provider) {
     if (b) setForecastModel(provider, b.dataset.m);
   });
 
+  let histKey = "";
   METERS.set(key, {
     used(pct, resetIso) { st.used = pct; st.reset = resetIso || null; paint(); },
     // Re-reads the countdown (every tick); a new reset time can come with it.
     reset(resetIso) { if (resetIso !== undefined) st.reset = resetIso || null; paintReset(); },
     // atReset: % used at the reset (null when unknown); hitMs: when it reaches 100% first.
+    // The window's history (epoch seconds, %), to split the used block into
+    // calendar days. Only the 7-day meters get it; empty arrays clear the split.
+    history(ts, ys) {
+      const key = `${ts.length}|${ts[ts.length - 1]}|${st.reset}|${new Date().toDateString()}`;
+      if (key === histKey) return;
+      histKey = key;
+      st.days = dayMarks(ts, ys, st.reset ? new Date(st.reset).getTime() : null, Date.now());
+      paint();
+    },
     outlook(atReset, hitMs) { st.over = hitMs != null; st.hitMs = hitMs; st.atReset = atReset; paint(); },
     // rate: true %/h (null hides it); hours picks the scale its colour is read on.
     rate(rate, hours) {
@@ -1616,9 +1661,11 @@ function updateGauges() {
     meter(st.p + "fh").rate(burnRate(st.data[0], st.data[1], now, SCALES[5].lookback), 5);
     // A model-scoped weekly limit has no stored history, so no rate of its own.
     meter(st.p + "sd").rate(scopedLimit(st) ? null : burnRate(st.data[0], st.data[2], now, SCALES[168].lookback), 168);
+    meter(st.p + "sd").history(...(scopedLimit(st) ? [[], []] : [st.data[0], st.data[2]]));
   }
   meter("cx5").rate(burnRate(X.data[0], X.data[1], now, SCALES[5].lookback), 5);
   meter("cx7").rate(burnRate(X.data[0], X.data[2], now, SCALES[168].lookback), 168);
+  meter("cx7").history(X.data[0], X.data[2]);
 }
 
 // ---- staleness ----

@@ -171,6 +171,14 @@ table.acc-tbl tr.active td:first-child::after { content: " · in use"; color: va
 .m-used .m-lbl, .m-rate .m-lbl { color: #fff; }
 .light-m .m-used .m-lbl, .light-m .m-rate .m-lbl { color: #1f2328; }
 .m-seg.tight .m-lbl { visibility: hidden; }
+/* calendar days inside the used block: a dashed line where each day ended */
+.m-used .m-lbl { position: relative; z-index: 1; background: var(--m); border-radius: 4px; }
+.m-day { position: absolute; top: 0; bottom: 0; }
+.m-day:not(.split) { border-radius: 7px 0 0 7px; }
+.m-day.split { border-left: 1.5px dashed rgba(255,255,255,.75); }
+.light-m .m-day.split { border-left-color: rgba(31,35,40,.4); }
+.m-day:hover { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ink) 35%, transparent); }
+.m-used:has(.m-day:hover) { filter: none; box-shadow: none; }
 /* smoke off a fast burn */
 .m-smoke { position: absolute; inset: 0 0 auto 0; height: 0; pointer-events: none; }
 .m-smoke i { position: absolute; top: -4px; width: 14px; height: 14px; border-radius: 50%;

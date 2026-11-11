@@ -774,8 +774,31 @@ const Predictors = {
   },
 };
 
+// How a window's usage splits into calendar days (local time). The window opens
+// `periodSec` before `resetMs`; each day runs from local midnight (the first
+// from the window's start) and starts at the % reached by the latest sample at or
+// before that point (0 if none since the window opened). The last day is today's,
+// still open. ts in epoch seconds, ys in percent (nulls skipped).
+//   -> [{ start: ms, from: percent }]   ascending, `from` never decreasing
+function dayMarks(ts, ys, resetMs, nowMs, periodSec = 7 * 86400) {
+  if (!resetMs || !(nowMs > 0)) return [];
+  const open = resetMs - periodSec * 1000;
+  if (nowMs <= open) return [];
+  const days = [{ start: open, from: 0 }];
+  const d = new Date(open);
+  d.setHours(24, 0, 0, 0);                      // the next local midnight (DST-safe)
+  let i = 0, last = 0;
+  while (i < ts.length && ts[i] * 1000 < open) i++;
+  for (; d.getTime() <= nowMs; d.setDate(d.getDate() + 1)) {
+    const m = d.getTime();
+    for (; i < ts.length && ts[i] * 1000 <= m; i++) if (ys[i] != null) last = Math.max(last, ys[i]);
+    days.push({ start: m, from: last });
+  }
+  return days;
+}
+
 // Browser (classic <script>): these top-level consts are shared globals for app.js.
 // Node (tests): expose via CommonJS. `module` is undefined in the browser.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { Predictors, bandSpread, residualSpread, withBand, gateWorkDays, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset };
+  module.exports = { Predictors, bandSpread, residualSpread, withBand, gateWorkDays, segmentCycles, cycleSlopes, robustMean, leastSquaresSlope, inferResetPeriod, sampleAt, hourlyRates, consumptionRatio, deriveSeries, weightedRobustMean, recencyWeight, recentTrailingSlope, normalizeHourly, resolveReset, dayMarks };
 }
