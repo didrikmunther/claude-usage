@@ -2,7 +2,7 @@
 
 What's new in each version, newest first.
 
-## [Unreleased]
+## [0.28.0] - 2026-11-11
 - The 7-day meters show where each day began: dashed lines split the used part of the bar by calendar day. Hover a day to see how much of your weekly limit it used.
 
 ## [0.27.0] - 2026-11-09
